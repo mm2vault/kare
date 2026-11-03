@@ -75,6 +75,7 @@
     link: '<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+    layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     download: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>'
   };
@@ -175,7 +176,7 @@
     var s = state.session;
     state.me = null; state.following = new Set();
     if (!s) return;
-    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path').eq('id', s.user.id).maybeSingle();
+    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path,banner_path').eq('id', s.user.id).maybeSingle();
     state.me = r.data || null;
     var f = await sb.from('follows').select('following_id').eq('follower_id', s.user.id);
     (f.data || []).forEach(function (x) { state.following.add(x.following_id); });
@@ -372,6 +373,7 @@
       return { blob: file, type: 'image', contentType: 'image/gif', ext: 'gif', w: w, h: hh };
     }
     var sx = 0, sy = 0, sw = w, sh = hh, cw, ch;
+    if (opts.banner) { var th = Math.min(hh, w / 3); sh = th; sy = (hh - th) / 2; max = 1500; }
     if (opts.square) { var side = Math.min(w, hh); sx = (w - side) / 2; sy = (hh - side) / 2; sw = side; sh = side; }
     var scale = Math.min(1, max / Math.max(sw, sh));
     cw = Math.round(sw * scale); ch = Math.round(sh * scale);
@@ -393,19 +395,22 @@
   }
   function removeFile(path) { if (path) sb.storage.from(BUCKET).remove([path]).then(function () {}, function () {}); }
 
+  var MAX_ITEMS = 10;
   function uploadModal(startKind) {
     if (!requireLogin()) return;
     var kind = startKind || 'post';
-    var prep = null, previewUrl = null, busy = false;
+    var items = [], busy = false;
     var host = h('div', { style: { display: 'contents' } });
     var m = modal(host, 'Paylaş');
-    var fileInput = h('input', { class: 'sr', id: 'u-file', type: 'file', accept: 'image/*,video/mp4,video/webm,video/quicktime' });
+    var fileInput = h('input', { class: 'sr', id: 'u-file', type: 'file', multiple: true, accept: 'image/*,video/mp4,video/webm,video/quicktime' });
     var err = h('div', { class: 'hint bad', role: 'alert' });
     var caption = h('textarea', { class: 'textarea', id: 'u-cap', maxlength: '2000', placeholder: 'Bir şeyler yaz (isteğe bağlı)' });
-    var preview = h('div', { class: 'preview', hidden: true });
-    var dropEl = h('label', { class: 'drop', for: 'u-file' }, icon('image'), h('b', null, 'Fotoğraf veya video seç'), h('span', { class: 'hint' }, 'Sürükleyip bırakabilirsin. Video en fazla 50 MB.'));
-    var capField = h('div', { class: 'field' }, h('label', { for: 'u-cap' }, 'Açıklama'), caption);
-    var prog = h('div', { class: 'progress', hidden: true }, h('i'));
+    var capLabel = h('label', { for: 'u-cap' }, 'Açıklama');
+    var thumbs = h('div', { class: 'thumbs', hidden: true });
+    var dropEl = h('label', { class: 'drop', for: 'u-file' }, icon('image'), h('b', null, 'Fotoğraf veya video seç'), h('span', { class: 'hint' }, 'En fazla ' + MAX_ITEMS + ' dosya, hepsini birden seçebilirsin. Video en fazla 50 MB.'));
+    var capField = h('div', { class: 'field' }, capLabel, caption);
+    var bar = h('i', { style: { width: '0%' } });
+    var prog = h('div', { class: 'progress', hidden: true }, bar);
     var submit = h('button', { class: 'btn', type: 'button', disabled: true }, 'Paylaş');
     var segPost = h('button', { type: 'button', 'aria-pressed': 'true', onclick: function () { setKind('post'); } }, 'Paylaşım');
     var segStory = h('button', { type: 'button', 'aria-pressed': 'false', onclick: function () { setKind('story'); } }, 'Hikaye (24 saat)');
@@ -413,53 +418,98 @@
       kind = k;
       segPost.setAttribute('aria-pressed', k === 'post' ? 'true' : 'false');
       segStory.setAttribute('aria-pressed', k === 'story' ? 'true' : 'false');
-      capField.hidden = k === 'story';
+      capLabel.textContent = k === 'story' ? 'Hikaye yazısı' : 'Açıklama';
+      caption.maxLength = k === 'story' ? 140 : 2000;
+      caption.placeholder = k === 'story' ? 'Kısa bir yazı (isteğe bağlı)' : 'Bir şeyler yaz (isteğe bağlı)';
+      render();
     }
-    async function pick(file) {
+    function render() {
+      var n = items.length;
+      dropEl.hidden = n > 0;
+      thumbs.hidden = n === 0;
+      submit.disabled = n === 0 || busy;
+      submit.textContent = n > 1 ? (kind === 'story' ? n + ' hikaye paylaş' : n + ' kareyi paylaş') : 'Paylaş';
+      var nodes = items.map(function (it, i) {
+        var el = it.prep.type === 'video'
+          ? h('video', { src: it.url + '#t=0.1', muted: true, playsinline: true, preload: 'metadata' })
+          : h('img', { src: it.url, alt: 'Seçilen ' + (i + 1) });
+        return h('div', { class: 'thumb enter', style: { '--i': String(Math.min(i, 9)) } }, el,
+          it.prep.type === 'video' ? h('span', { class: 'tb-vid' }, icon('play')) : null,
+          n > 1 ? h('span', { class: 'tb-n mono' }, String(i + 1)) : null,
+          h('button', { type: 'button', class: 'tb-x', 'aria-label': 'Kaldır', disabled: busy, onclick: function () {
+            URL.revokeObjectURL(it.url); items.splice(items.indexOf(it), 1); render();
+          } }, icon('x')));
+      });
+      if (n && n < MAX_ITEMS) nodes.push(h('label', { class: 'thumb add', for: 'u-file', 'aria-label': 'Daha fazla ekle' }, icon('plus'), h('span', { class: 'mono' }, n + '/' + MAX_ITEMS)));
+      thumbs.replaceChildren.apply(thumbs, nodes);
+    }
+    async function addFiles(list) {
       err.textContent = '';
-      if (!file) return;
-      try {
-        submit.disabled = true;
-        prep = await prepareMedia(file);
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-        previewUrl = URL.createObjectURL(prep.blob);
-        var el = prep.type === 'video' ? h('video', { src: previewUrl, controls: true, playsinline: true, muted: true }) : h('img', { src: previewUrl, alt: 'Önizleme' });
-        preview.replaceChildren(el); preview.hidden = false; dropEl.hidden = true;
-        submit.disabled = false;
-      } catch (e) { prep = null; err.textContent = friendlyError(e); }
+      var files = Array.prototype.slice.call(list || []);
+      if (!files.length) return;
+      var room = MAX_ITEMS - items.length;
+      var msgs = [];
+      if (files.length > room) { msgs.push('En fazla ' + MAX_ITEMS + ' dosya eklenebilir.'); files = files.slice(0, Math.max(0, room)); }
+      submit.disabled = true;
+      for (var i = 0; i < files.length; i++) {
+        try {
+          var prep = await prepareMedia(files[i]);
+          items.push({ prep: prep, url: URL.createObjectURL(prep.blob) });
+          render();
+        } catch (e) { msgs.push(files[i].name + ': ' + friendlyError(e)); }
+      }
+      err.textContent = msgs.join(' ');
+      render();
     }
-    fileInput.addEventListener('change', function () { pick(fileInput.files[0]); });
-    ['dragenter', 'dragover'].forEach(function (n) { dropEl.addEventListener(n, function (ev) { ev.preventDefault(); dropEl.classList.add('over'); }); });
-    ['dragleave', 'drop'].forEach(function (n) { dropEl.addEventListener(n, function (ev) { ev.preventDefault(); dropEl.classList.remove('over'); }); });
-    dropEl.addEventListener('drop', function (ev) { if (ev.dataTransfer.files[0]) pick(ev.dataTransfer.files[0]); });
+    fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
+    [dropEl, thumbs].forEach(function (el) {
+      ['dragenter', 'dragover'].forEach(function (n) { el.addEventListener(n, function (ev) { ev.preventDefault(); el.classList.add('over'); }); });
+      ['dragleave', 'drop'].forEach(function (n) { el.addEventListener(n, function (ev) { ev.preventDefault(); el.classList.remove('over'); }); });
+      el.addEventListener('drop', function (ev) { if (ev.dataTransfer && ev.dataTransfer.files.length) addFiles(ev.dataTransfer.files); });
+    });
     var cancel = h('button', { class: 'btn quiet', type: 'button', onclick: function () { if (!busy) m.close(); } }, 'Vazgeç');
     submit.addEventListener('click', async function () {
-      if (!prep || busy) return;
-      busy = true; submit.disabled = true; cancel.disabled = true; prog.hidden = false; err.textContent = '';
-      var path = null;
+      if (!items.length || busy) return;
+      busy = true; submit.disabled = true; cancel.disabled = true; prog.hidden = false; err.textContent = ''; render();
+      var paths = [], total = items.length;
       try {
-        path = await uploadPrepared(prep, kind === 'story' ? 's-' : '');
-        var row;
-        if (kind === 'story') {
-          row = await sb.from('stories').insert({ user_id: state.me.id, media_path: path, media_type: prep.type });
-        } else {
-          row = await sb.from('posts').insert({ user_id: state.me.id, caption: caption.value.trim() || null, media_path: path, media_type: prep.type, width: prep.w || null, height: prep.h || null });
+        for (var i = 0; i < total; i++) {
+          paths.push(await uploadPrepared(items[i].prep, kind === 'story' ? 's-' : ''));
+          bar.style.width = Math.round(((i + 1) / total) * 90) + '%';
+          submit.textContent = 'Yükleniyor ' + (i + 1) + '/' + total;
         }
-        if (row.error) throw row.error;
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        var cap = caption.value.trim() || null;
+        if (kind === 'story') {
+          var base = Date.now();
+          var rows = items.map(function (it, i) {
+            return { user_id: state.me.id, media_path: paths[i], media_type: it.prep.type, caption: cap, created_at: new Date(base + i * 1000).toISOString() };
+          });
+          var sr = await sb.from('stories').insert(rows);
+          if (sr.error) throw sr.error;
+        } else {
+          var f = items[0].prep;
+          var pr = await sb.from('posts').insert({ user_id: state.me.id, caption: cap, media_path: paths[0], media_type: f.type, width: f.w || null, height: f.h || null }).select('id').single();
+          if (pr.error) throw pr.error;
+          var mr = await sb.from('post_media').insert(items.map(function (it, i) {
+            return { post_id: pr.data.id, position: i, media_path: paths[i], media_type: it.prep.type, width: it.prep.w || null, height: it.prep.h || null };
+          }));
+          if (mr.error) { await sb.from('posts').delete().eq('id', pr.data.id); throw mr.error; }
+        }
+        bar.style.width = '100%';
+        items.forEach(function (it) { URL.revokeObjectURL(it.url); });
         m.close();
-        toast(kind === 'story' ? 'Hikayen yayında.' : 'Paylaşıldı!');
+        toast(kind === 'story' ? (total > 1 ? total + ' hikayen yayında.' : 'Hikayen yayında.') : (total > 1 ? total + ' karelik paylaşım yayında!' : 'Paylaşıldı!'));
         if (location.hash === '' || location.hash === '#/' || location.hash === '#') route(); else location.hash = '#/';
       } catch (e) {
-        if (path) removeFile(path);
+        paths.forEach(removeFile);
         err.textContent = friendlyError(e);
-        busy = false; submit.disabled = false; cancel.disabled = false; prog.hidden = true;
+        busy = false; cancel.disabled = false; prog.hidden = true; bar.style.width = '0%'; render();
       }
     });
     host.append(
       h('h2', null, 'Paylaş'),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Ne paylaşacaksın' }, segPost, segStory),
-      fileInput, dropEl, preview, capField, prog, err,
+      fileInput, dropEl, thumbs, capField, prog, err,
       h('p', { class: 'hint', style: { margin: 0 } }, 'Başkalarına ait ya da uygunsuz içerik paylaşma.'),
       h('div', { class: 'row' }, cancel, submit));
     setKind(kind);
@@ -467,8 +517,8 @@
 
   /* ================= veri katmanı ================= */
   var PROFILE_SEL = 'id,username,display_name,avatar_path';
-  var POST_SEL = 'id,user_id,caption,media_path,media_type,width,height,created_at,author:profiles!posts_user_id_fkey(' + PROFILE_SEL + '),likes(count),comments(count),reposts(count)';
-  var GRID_SEL = 'id,media_path,media_type,likes(count),comments(count)';
+  var POST_SEL = 'id,user_id,caption,media_path,media_type,width,height,created_at,media:post_media(position,media_path,media_type,width,height),author:profiles!posts_user_id_fkey(' + PROFILE_SEL + '),likes(count),comments(count),reposts(count)';
+  var GRID_SEL = 'id,media_path,media_type,media:post_media(position),likes(count),comments(count)';
   function ms(iso) { return new Date(iso).getTime(); }
 
   async function attachMine(items) {
@@ -527,18 +577,21 @@
     });
   }, { threshold: [0, 0.6] }) : null;
 
-  function mediaEl(p, onTap, onDouble) {
-    var box = h('div', { class: 'media', style: { '--ar': String(arOf(p)) } });
+  function mediaList(p) {
+    var l = (p.media || []).slice().sort(function (a, b) { return a.position - b.position; });
+    return l.length ? l : [{ media_path: p.media_path, media_type: p.media_type, width: p.width, height: p.height }];
+  }
+  function singleMedia(it, p, onTap, onDouble) {
+    var box = h('div', { class: 'media', style: { '--ar': String(arOf(it)) } });
     var v = null;
-    if (p.media_type === 'video') {
-      v = h('video', { src: mediaUrl(p.media_path), playsinline: true, loop: true, preload: 'metadata', 'aria-label': 'Video' });
+    if (it.media_type === 'video') {
+      v = h('video', { src: mediaUrl(it.media_path), playsinline: true, loop: true, preload: 'metadata', 'aria-label': 'Video' });
       v.muted = true;
       var mute = h('button', { class: 'mute', type: 'button', 'aria-label': 'Sesi aç/kapat', onclick: function (ev) { ev.stopPropagation(); v.muted = !v.muted; mute.replaceChildren(icon(v.muted ? 'mute' : 'volume')); } }, icon('mute'));
       box.append(v, h('div', { class: 'pp' }, h('span', null, icon('play'))), mute);
       if (vio) vio.observe(v);
     } else {
-      var img = h('img', { src: mediaUrl(p.media_path), alt: p.caption ? p.caption.slice(0, 100) : 'Paylaşım', loading: 'lazy', decoding: 'async' });
-      box.append(img);
+      box.append(h('img', { src: mediaUrl(it.media_path), alt: p.caption ? p.caption.slice(0, 100) : 'Paylaşım', loading: 'lazy', decoding: 'async' }));
     }
     var last = 0, timer = null;
     box.addEventListener('click', function () {
@@ -552,6 +605,39 @@
         } else if (onTap) onTap();
       }, 260);
     });
+    return box;
+  }
+  function mediaEl(p, onTap, onDouble) {
+    var list = mediaList(p);
+    if (list.length < 2) return singleMedia(list[0], p, onTap, onDouble);
+    var box = h('div', { class: 'carousel', style: { '--ar': String(arOf(list[0])) } });
+    var track = h('div', { class: 'track', tabindex: '0', 'aria-label': 'Fotoğraf albümü, ' + list.length + ' kare' });
+    list.forEach(function (it) { var s = singleMedia(it, p, onTap, onDouble); s.classList.add('slide'); track.append(s); });
+    var count = h('span', { class: 'count mono' }, '1/' + list.length);
+    var dots = h('div', { class: 'dots', 'aria-hidden': 'true' }, list.map(function (_, i) { return h('i', { class: i === 0 ? 'on' : '' }); }));
+    var idx = 0;
+    function go(i) { track.scrollTo({ left: clamp(i, 0, list.length - 1) * track.clientWidth, behavior: 'smooth' }); }
+    var prev = h('button', { class: 'nav l', type: 'button', 'aria-label': 'Önceki kare', onclick: function (ev) { ev.stopPropagation(); go(idx - 1); } }, icon('back'));
+    var next = h('button', { class: 'nav r', type: 'button', 'aria-label': 'Sonraki kare', onclick: function (ev) { ev.stopPropagation(); go(idx + 1); } }, icon('back'));
+    function paint() {
+      count.textContent = (idx + 1) + '/' + list.length;
+      Array.prototype.forEach.call(dots.children, function (d, i) { d.className = i === idx ? 'on' : ''; });
+      prev.hidden = idx === 0; next.hidden = idx === list.length - 1;
+    }
+    var raf = 0;
+    track.addEventListener('scroll', function () {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(function () {
+        var i = Math.round(track.scrollLeft / (track.clientWidth || 1));
+        if (i !== idx) { idx = i; paint(); }
+      });
+    }, { passive: true });
+    track.addEventListener('keydown', function (ev) {
+      if (ev.key === 'ArrowRight') { ev.preventDefault(); go(idx + 1); }
+      else if (ev.key === 'ArrowLeft') { ev.preventDefault(); go(idx - 1); }
+    });
+    box.append(track, count, dots, prev, next);
+    paint();
     return box;
   }
 
@@ -662,7 +748,7 @@
     if (!ok) return;
     var r = await sb.from('posts').delete().eq('id', p.id);
     if (r.error) { toast(friendlyError(r.error), true); return; }
-    removeFile(p.media_path);
+    mediaList(p).forEach(function (it) { removeFile(it.media_path); });
     toast('Paylaşım silindi.');
     if (opts && opts.detail) location.hash = '#/'; else card.remove();
   }
@@ -698,7 +784,7 @@
   }
   async function fetchStoryGroups() {
     var since = new Date(Date.now() - 864e5).toISOString();
-    var r = await sb.from('stories').select('id,user_id,media_path,media_type,created_at,author:profiles!stories_user_id_fkey(' + PROFILE_SEL + ')').gte('created_at', since).order('created_at', { ascending: true }).limit(300);
+    var r = await sb.from('stories').select('id,user_id,media_path,media_type,caption,created_at,author:profiles!stories_user_id_fkey(' + PROFILE_SEL + ')').gte('created_at', since).order('created_at', { ascending: true }).limit(300);
     if (r.error) return [];
     var map = {}, groups = [];
     r.data.forEach(function (s) {
@@ -739,12 +825,12 @@
     var seen = seenSet();
     var g = groups[gi];
     var si = Math.max(0, g.stories.findIndex(function (s) { return !seen.has(s.id); }));
-    var raf = 0, running = false, t0 = 0, vid = null, cur = null, fill = null, closed = false;
+    var raf = 0, running = false, t0 = 0, vid = null, cur = null, fill = null, closed = false, elapsed = 0, anim = '';
     var root = h('div', { class: 'sv', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Hikaye' });
     document.body.append(root);
     lock();
-    var DUR = 5000;
-    function stop() { running = false; cancelAnimationFrame(raf); if (vid) vid.pause(); }
+    var DUR = 5500;
+    function stop() { running = false; cancelAnimationFrame(raf); if (vid) vid.pause(); root.classList.add('held'); }
     function loop(now) {
       if (!running) return;
       var pct;
@@ -754,10 +840,9 @@
       if (pct >= 1 || (vid && vid.ended)) { next(); return; }
       raf = requestAnimationFrame(loop);
     }
-    var elapsed = 0;
     function play() {
       if (running || closed) return;
-      running = true;
+      running = true; root.classList.remove('held');
       t0 = performance.now() - elapsed;
       if (vid) vid.play().catch(function () { vid.muted = true; vid.play().catch(function () {}); });
       raf = requestAnimationFrame(loop);
@@ -765,28 +850,55 @@
     function pause() { if (!running) return; elapsed = performance.now() - t0; stop(); }
     function close() {
       if (closed) return;
-      closed = true; stop(); root.remove(); unlock();
+      closed = true; stop();
       document.removeEventListener('keydown', key);
-      if (onClose) onClose();
+      root.classList.add('closing');
+      setTimeout(function () { root.remove(); unlock(); if (onClose) onClose(); }, 200);
     }
     function next() {
-      if (si < g.stories.length - 1) { si++; show(); }
-      else if (gi < groups.length - 1) { gi++; g = groups[gi]; si = 0; show(); }
-      else close();
+      if (si < g.stories.length - 1) { si++; anim = 'next'; show(); }
+      else nextUser();
     }
     function prev() {
-      if (si > 0) { si--; show(); }
-      else if (gi > 0) { gi--; g = groups[gi]; si = 0; show(); }
-      else { elapsed = 0; show(); }
+      if (si > 0) { si--; anim = 'prev'; show(); }
+      else if (gi > 0) { gi--; g = groups[gi]; si = g.stories.length - 1; anim = 'uprev'; show(); }
+      else { elapsed = 0; anim = ''; show(); }
+    }
+    function nextUser() {
+      if (gi < groups.length - 1) { gi++; g = groups[gi]; si = Math.max(0, g.stories.findIndex(function (s) { return !seenSet().has(s.id); })); anim = 'unext'; show(); }
+      else close();
+    }
+    function prevUser() {
+      if (gi > 0) { gi--; g = groups[gi]; si = 0; anim = 'uprev'; show(); }
     }
     function key(ev) {
+      if (ev.target && /INPUT|TEXTAREA/.test(ev.target.tagName)) { if (ev.key === 'Escape') ev.target.blur(); return; }
       if (ev.key === 'Escape') close();
       else if (ev.key === 'ArrowRight') next();
       else if (ev.key === 'ArrowLeft') prev();
+      else if (ev.key === ' ') { ev.preventDefault(); running ? pause() : play(); }
     }
     document.addEventListener('keydown', key);
+
+    function sendToOwner(text, thenToast) {
+      if (!requireLogin()) return Promise.resolve(false);
+      return sb.from('messages').insert({ sender_id: state.me.id, recipient_id: g.user.id, body: text.slice(0, 1000) }).then(function (r) {
+        if (r.error) { toast(friendlyError(r.error), true); return false; }
+        toast(thenToast); return true;
+      });
+    }
+    function floatEmoji(frame, emo) {
+      for (var k = 0; k < 7; k++) {
+        (function (k) {
+          var e = h('span', { class: 'flo', 'aria-hidden': 'true', style: { '--x': (Math.random() * 120 - 60).toFixed(0) + 'px', '--d': (k * 70) + 'ms', '--r': (Math.random() * 40 - 20).toFixed(0) + 'deg' } }, emo);
+          frame.append(e); setTimeout(function () { e.remove(); }, 1700 + k * 70);
+        })(k);
+      }
+    }
+
     function show() {
       stop(); elapsed = 0;
+      var old = root.firstChild;
       cur = g.stories[si];
       markSeen(cur.id);
       var bars = h('div', { class: 'bars' });
@@ -797,7 +909,7 @@
       });
       var own = state.me && cur.user_id === state.me.id;
       var head = h('div', { class: 'shead' },
-        avatarEl(g.user, 36),
+        h('a', { href: '#/u/' + encodeURIComponent(g.user.username), onclick: function () { close(); } }, avatarEl(g.user, 36)),
         h('div', { class: 'who' }, h('b', null, nameOf(g.user)), h('span', { class: 'mono', style: { color: 'rgba(255,255,255,.8)' } }, timeAgo(cur.created_at))),
         own ? h('button', { type: 'button', 'aria-label': 'Hikayeyi sil', onclick: async function () {
           pause();
@@ -808,30 +920,72 @@
           removeFile(cur.media_path);
           g.stories.splice(si, 1);
           toast('Hikaye silindi.');
+          anim = '';
           if (!g.stories.length) { groups.splice(gi, 1); if (!groups.length) { close(); return; } if (gi >= groups.length) gi = groups.length - 1; g = groups[gi]; si = 0; }
           else if (si >= g.stories.length) si = g.stories.length - 1;
           show();
         } }, icon('trash')) : null,
         h('button', { type: 'button', 'aria-label': 'Kapat', onclick: close }, icon('x')));
-      var frame = h('div', { class: 'frame' });
+      var frame = h('div', { class: 'frame' + (anim ? ' in-' + anim : '') });
       vid = null;
       if (cur.media_type === 'video') {
         vid = h('video', { src: mediaUrl(cur.media_path), playsinline: true, preload: 'auto' });
         frame.append(vid);
       } else {
-        frame.append(h('img', { src: mediaUrl(cur.media_path), alt: 'Hikaye' }));
+        frame.append(h('img', { class: 'kb', src: mediaUrl(cur.media_path), alt: 'Hikaye' }));
       }
+      var nx = g.stories[si + 1];
+      if (nx && nx.media_type !== 'video') { var pre = new Image(); pre.src = mediaUrl(nx.media_path); }
+      if (cur.caption) frame.append(h('div', { class: 'scap' }, h('span', null, cur.caption)));
       var zl = h('button', { class: 'zone l', type: 'button', 'aria-label': 'Önceki', onclick: prev });
       var zr = h('button', { class: 'zone r', type: 'button', 'aria-label': 'Sonraki', onclick: next });
       [zl, zr].forEach(function (z) {
         var down = 0;
         z.addEventListener('pointerdown', function () { down = Date.now(); pause(); });
-        z.addEventListener('pointerup', function (ev) { if (Date.now() - down > 220) { ev.preventDefault(); z._skip = true; } play(); });
-        z.addEventListener('pointercancel', function () { play(); });
+        z.addEventListener('pointerup', function (ev) { if (Date.now() - down > 220) { ev.preventDefault(); z._skip = true; } if (!frame._typing) play(); });
+        z.addEventListener('pointercancel', function () { if (!frame._typing) play(); });
         z.addEventListener('click', function (ev) { if (z._skip) { z._skip = false; ev.stopImmediatePropagation(); } }, true);
       });
       frame.append(bars, head, zl, zr);
-      root.replaceChildren(frame);
+
+      if (!own) {
+        var inp = h('input', { class: 'sreply', type: 'text', maxlength: '300', placeholder: nameOf(g.user) + ' kişisine yanıt yaz', 'aria-label': 'Hikayeye yanıt' });
+        var sendB = h('button', { class: 'ssend', type: 'submit', 'aria-label': 'Gönder' }, icon('send'));
+        var reply = h('form', { class: 'sbar' },
+          h('div', { class: 'emos' }, ['❤️', '🔥', '😂', '😮', '👏'].map(function (emo) {
+            return h('button', { type: 'button', 'aria-label': 'Tepki ' + emo, onclick: async function () {
+              floatEmoji(frame, emo);
+              await sendToOwner(emo + ' hikayene tepki verdi', 'Tepkin gönderildi');
+            } }, emo);
+          })),
+          h('div', { class: 'srow' }, inp, sendB));
+        inp.addEventListener('focus', function () { frame._typing = true; pause(); });
+        inp.addEventListener('blur', function () { frame._typing = false; play(); });
+        reply.addEventListener('submit', async function (ev) {
+          ev.preventDefault();
+          var t = inp.value.trim(); if (!t) return;
+          if (await sendToOwner('↩️ Hikayene yanıt: ' + t, 'Yanıtın gönderildi')) { inp.value = ''; inp.blur(); }
+        });
+        frame.append(reply);
+      }
+
+      // kaydırma hareketleri: aşağı = kapat, yana = kişi değiştir
+      var sx = 0, sy = 0, tracking = false;
+      frame.addEventListener('pointerdown', function (ev) { if (ev.target.closest('.sbar')) return; sx = ev.clientX; sy = ev.clientY; tracking = true; });
+      frame.addEventListener('pointerup', function (ev) {
+        if (!tracking) return; tracking = false;
+        var dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (dy > 110 && Math.abs(dy) > Math.abs(dx) * 1.4) { frame._swiped = true; close(); }
+        else if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 1.4) { frame._swiped = true; if (dx < 0) nextUser(); else prevUser(); }
+      });
+
+      if (old && anim) {
+        old.classList.add('ghost', 'out-' + anim);
+        old.querySelectorAll('button, input').forEach(function (b) { b.tabIndex = -1; });
+        root.append(frame);
+        setTimeout(function () { old.remove(); }, 380);
+      } else root.replaceChildren(frame);
+      anim = '';
       if (vid) vid.addEventListener('loadeddata', play, { once: true });
       else play();
     }
@@ -973,6 +1127,11 @@
     if (!cr.data || !cr.data.length) listEl.append(h('p', { class: 'hint', style: { margin: 0 } }, 'İlk yorumu sen yaz.'));
   }
 
+  function bannerFallback(name, cls) {
+    var hue = 0;
+    for (var i = 0; i < name.length; i++) hue = (hue * 31 + name.charCodeAt(i)) % 360;
+    return h('div', { class: 'bn-fallback ' + (cls || ''), style: { '--h1': String(hue), '--h2': String((hue + 55) % 360) } });
+  }
   function gridTile(post, i) {
     var t = h('a', { class: 'tile enter', href: '#/p/' + post.id, style: { '--i': String(Math.min(i, 14)) }, 'aria-label': 'Paylaşımı aç' });
     if (post.media_type === 'video') {
@@ -980,6 +1139,7 @@
       v.muted = true;
       t.append(v, h('span', { class: 'badge' }, icon('play')));
     } else t.append(h('img', { src: mediaUrl(post.media_path), alt: '', loading: 'lazy', decoding: 'async' }));
+    if (post.media && post.media.length > 1) t.append(h('span', { class: 'badge multi' }, icon('layers')));
     t.append(h('span', { class: 'over' }, h('span', null, icon('heart'), fmt(cnt(post.likes))), h('span', null, icon('comment'), fmt(cnt(post.comments)))));
     return t;
   }
@@ -987,7 +1147,7 @@
   async function profilePage(username, tok) {
     var view = $('#view');
     view.replaceChildren(h('div', { class: 'sk sk-card', style: { height: '220px' } }));
-    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path,created_at').eq('username', username.toLowerCase()).maybeSingle();
+    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path,banner_path,created_at').eq('username', username.toLowerCase()).maybeSingle();
     if (tok !== routeTok) return;
     if (r.error || !r.data) { view.replaceChildren(emptyState('Kullanıcı bulunamadı', '@' + username + ' adında biri yok.', h('a', { class: 'btn', href: '#/' }, 'Ana sayfa'))); return; }
     var pr = r.data;
@@ -1020,6 +1180,7 @@
         action.textContent = state.following.has(pr.id) ? 'Takiptesin' : 'Takip et';
       });
     }
+    var banner = h('div', { class: 'pbanner' }, pr.banner_path ? h('img', { src: mediaUrl(pr.banner_path), alt: '', decoding: 'async' }) : bannerFallback(pr.username));
     var head = h('div', { class: 'phead' },
       avatarEl(pr, 96),
       h('div', { class: 'info' },
@@ -1034,7 +1195,7 @@
     var tabPosts = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { showTab('posts'); } }, 'Paylaşımlar');
     var tabReposts = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { showTab('reposts'); } }, 'Repostlar');
     var tabs = h('div', { class: 'tabs', role: 'tablist' }, tabPosts, tabReposts);
-    var wrap = h('div', { class: 'page-in' }, head, tabs, gridHost);
+    var wrap = h('div', { class: 'page-in' }, banner, head, tabs, gridHost);
     view.replaceChildren(wrap);
     async function showTab(t) {
       tabPosts.setAttribute('aria-selected', t === 'posts' ? 'true' : 'false');
@@ -1082,7 +1243,7 @@
     var view = $('#view');
     if (!state.me) { view.replaceChildren(emptyState('Ayarlar için giriş yap', null, h('button', { class: 'btn', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'))); return; }
     var me = state.me;
-    var newAvatar = null, previewUrl = null;
+    var newAvatar = null, previewUrl = null, newBanner = null, bannerUrl = null, removeBanner = false;
     var avHost = h('div', null, avatarEl(me, 96));
     var file = h('input', { class: 'sr', id: 's-av', type: 'file', accept: 'image/*' });
     file.addEventListener('change', async function () {
@@ -1094,6 +1255,22 @@
         avHost.replaceChildren(h('span', { class: 'av', style: { '--s': '96px' } }, h('img', { src: previewUrl, alt: '' })));
       } catch (e) { toast(friendlyError(e), true); }
     });
+    var bnHost = h('div', { class: 'bn-prev' });
+    function paintBanner(src) {
+      bnHost.replaceChildren(src ? h('img', { src: src, alt: 'Banner önizleme' }) : bannerFallback(me.username, 'bn-ph'));
+    }
+    paintBanner(me.banner_path ? mediaUrl(me.banner_path) : null);
+    var bnFile = h('input', { class: 'sr', id: 's-bn', type: 'file', accept: 'image/*' });
+    bnFile.addEventListener('change', async function () {
+      var f = bnFile.files[0]; if (!f) return;
+      try {
+        newBanner = await prepareMedia(f, { banner: true, imageOnly: true });
+        if (bannerUrl) URL.revokeObjectURL(bannerUrl);
+        bannerUrl = URL.createObjectURL(newBanner.blob); removeBanner = false;
+        paintBanner(bannerUrl);
+      } catch (e) { toast(friendlyError(e), true); }
+    });
+    var bnRemove = h('button', { class: 'btn quiet small', type: 'button', onclick: function () { newBanner = null; removeBanner = true; paintBanner(null); } }, 'Kaldır');
     var dn = h('input', { class: 'input', id: 's-dn', type: 'text', maxlength: '40', value: me.display_name || '' });
     var bio = h('textarea', { class: 'textarea', id: 's-bio', maxlength: '160' });
     bio.value = me.bio || '';
@@ -1101,7 +1278,9 @@
     var save = h('button', { class: 'btn', type: 'submit' }, 'Kaydet');
     var form = h('form', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '16px' } }, avHost, h('label', { class: 'btn quiet small', for: 's-av' }, 'Fotoğrafı değiştir')),
-      file,
+      file, bnFile,
+      h('div', { class: 'field' }, h('label', null, 'Profil bannerı'), bnHost,
+        h('div', { class: 'prow' }, h('label', { class: 'btn quiet small', for: 's-bn' }, 'Banner seç'), bnRemove), h('span', { class: 'hint' }, 'Geniş (3:1) bir fotoğraf en iyisi. Otomatik kırpılır.')),
       h('div', { class: 'field' }, h('label', { for: 's-dn' }, 'Görünen ad'), dn),
       h('div', { class: 'field' }, h('label', { for: 's-bio' }, 'Hakkında'), bio, h('span', { class: 'hint' }, 'En fazla 160 karakter.')),
       err,
@@ -1110,12 +1289,15 @@
       ev.preventDefault(); err.textContent = ''; save.disabled = true;
       try {
         var patch = { display_name: dn.value.trim() || null, bio: bio.value.trim() || null };
-        var oldPath = me.avatar_path;
+        var oldPath = me.avatar_path, oldBanner = me.banner_path;
+        if (newBanner) patch.banner_path = await uploadPrepared(newBanner, 'banner-');
+        else if (removeBanner) patch.banner_path = null;
         if (newAvatar) patch.avatar_path = await uploadPrepared(newAvatar, 'avatar-');
-        var r = await sb.from('profiles').update(patch).eq('id', me.id).select('id,username,display_name,bio,avatar_path').single();
-        if (r.error) { if (newAvatar && patch.avatar_path) removeFile(patch.avatar_path); throw r.error; }
+        var r = await sb.from('profiles').update(patch).eq('id', me.id).select('id,username,display_name,bio,avatar_path,banner_path').single();
+        if (r.error) { if (newAvatar && patch.avatar_path) removeFile(patch.avatar_path); if (newBanner && patch.banner_path) removeFile(patch.banner_path); throw r.error; }
+        if ('banner_path' in patch && oldBanner && oldBanner !== patch.banner_path) removeFile(oldBanner);
         if (newAvatar && oldPath && oldPath !== patch.avatar_path) removeFile(oldPath);
-        state.me = r.data; newAvatar = null;
+        state.me = r.data; me = r.data; newAvatar = null; newBanner = null; removeBanner = false;
         renderHeader();
         toast('Profilin güncellendi.');
       } catch (e) { err.textContent = friendlyError(e); }

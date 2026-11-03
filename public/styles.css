@@ -205,7 +205,7 @@ h1, h2 { font-family: var(--font-display); letter-spacing: -.02em; margin: 0; te
 .card { position: relative; }
 
 /* ---------- hikaye görüntüleyici ---------- */
-.sv { position: fixed; inset: 0; z-index: 80; background: #000; color: #fff; display: flex; flex-direction: column; align-items: center; touch-action: manipulation; }
+.sv { position: fixed; inset: 0; z-index: 80; background: #000; color: #fff; display: flex; flex-direction: column; align-items: center; touch-action: none; overflow: hidden; }
 .sv .frame { position: relative; flex: 1; min-height: 0; width: min(100%, 520px); display: flex; align-items: center; justify-content: center; }
 .sv .frame img, .sv .frame video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
 .sv .bars { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 10px; right: 10px; display: flex; gap: 4px; z-index: 3; }
@@ -333,7 +333,95 @@ h1, h2 { font-family: var(--font-display); letter-spacing: -.02em; margin: 0; te
 @media (max-width: 760px) { .chat { height: calc(100dvh - 96px); } }
 .install-box { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 12px; }
 @media (prefers-reduced-motion: no-preference) {
-  .dot { animation: pop .3s cubic-bezier(.2,1.6,.4,1); }
-  .bub { animation: pop .22s ease-out; }
-  @keyframes pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .dot { animation: dotpop .3s cubic-bezier(.2,1.6,.4,1); }
+  .bub { animation: dotpop .22s ease-out; }
+  @keyframes dotpop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+}
+
+/* ===== v4: çoklu medya, banner, hikaye ===== */
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.thumbs.over { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 10px; }
+.thumb { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; }
+.thumb .tb-x { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; padding: 0; }
+.thumb .tb-x .ico { width: 13px; height: 13px; }
+.thumb .tb-n { position: absolute; left: 5px; bottom: 5px; min-width: 20px; padding: 0 5px; border-radius: 10px; background: rgba(0,0,0,.6); color: #fff; font: 500 11px/20px var(--font-mono); text-align: center; }
+.thumb .tb-vid { position: absolute; left: 5px; top: 5px; color: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.7)); }
+.thumb .tb-vid .ico { width: 16px; height: 16px; }
+.thumb.add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 2px dashed var(--line); background: none; color: var(--muted); cursor: pointer; }
+.thumb.add:hover { border-color: var(--accent); color: var(--accent); }
+.thumb.enter, .nrow.enter, .urow.enter { animation: pop-in .45s cubic-bezier(.2,.7,.2,1) backwards; animation-delay: calc(var(--i, 0) * 45ms); }
+.progress i { transition: width .35s ease; }
+
+.carousel { position: relative; background: var(--surface-2); aspect-ratio: var(--ar, 1 / 1); max-height: 78vh; width: 100%; overflow: hidden; }
+.carousel .track { display: flex; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; outline: none; }
+.carousel .track::-webkit-scrollbar { display: none; }
+.carousel .slide { flex: 0 0 100%; height: 100%; aspect-ratio: auto; max-height: none; scroll-snap-align: center; scroll-snap-stop: always; }
+.carousel .slide img, .carousel .slide video { object-fit: contain; }
+.carousel .count { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.6); color: #fff; font: 500 12px/1 var(--font-mono); padding: 6px 9px; border-radius: 999px; pointer-events: none; }
+.carousel .dots { position: absolute; left: 0; right: 0; bottom: 10px; display: flex; justify-content: center; gap: 5px; pointer-events: none; }
+.carousel .dots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.55); box-shadow: 0 0 0 1px rgba(0,0,0,.25); transition: transform .25s, background .25s; }
+.carousel .dots i.on { background: #fff; transform: scale(1.35); }
+.carousel .nav { position: absolute; top: 50%; width: 34px; height: 34px; margin-top: -17px; border-radius: 50%; border: 0; background: rgba(0,0,0,.5); color: #fff; display: none; place-items: center; padding: 0; }
+.carousel .nav.l { left: 8px; } .carousel .nav.r { right: 8px; }
+.carousel .nav.r .ico { transform: rotate(180deg); }
+.carousel .nav .ico { width: 18px; height: 18px; }
+@media (hover: hover) { .carousel .nav:not([hidden]) { display: grid; opacity: 0; transition: opacity .2s; } .carousel:hover .nav { opacity: 1; } }
+.carousel .slide .mute { bottom: 28px; }
+
+.pbanner { position: relative; height: clamp(110px, 24vw, 210px); border-radius: 14px; overflow: hidden; background: var(--surface-2); }
+.pbanner img { width: 100%; height: 100%; object-fit: cover; }
+.bn-fallback { width: 100%; height: 100%; background: linear-gradient(115deg, hsl(var(--h1) 70% 52%), hsl(var(--h2) 75% 46%) 60%, hsl(var(--h1) 70% 40%)); background-size: 200% 200%; }
+.bn-fallback::after { content: ""; display: block; height: 100%; background: repeating-linear-gradient(90deg, rgba(255,255,255,.07) 0 2px, transparent 2px 44px); }
+.bn-prev { height: 96px; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.bn-prev img { width: 100%; height: 100%; object-fit: cover; }
+.pbanner + .phead { margin-top: 0; }
+.pbanner + .phead > .av { margin-top: -52px; border: 4px solid var(--bg); box-sizing: content-box; position: relative; z-index: 1; }
+.pbanner + .phead { padding-left: 14px; }
+.tile .badge.multi { left: auto; }
+
+.sv .frame { overflow: hidden; }
+.sv .frame img.kb { transform-origin: 50% 40%; }
+.sv.held .frame img.kb, .sv.held .frame .scap span { animation-play-state: paused; }
+.sv .ghost { position: absolute; top: 0; bottom: 0; left: 0; right: 0; margin: 0 auto; flex: none; pointer-events: none; z-index: 1; }
+.sv .scap { position: absolute; left: 0; right: 0; bottom: 118px; display: flex; justify-content: center; padding: 0 22px; z-index: 3; pointer-events: none; }
+.sv .scap span { background: rgba(0,0,0,.55); backdrop-filter: blur(6px); padding: 9px 14px; border-radius: 12px; font-weight: 500; text-align: center; max-width: 100%; overflow-wrap: anywhere; }
+.sv .sbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; padding: 40px 12px calc(12px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(to top, rgba(0,0,0,.65), transparent); display: flex; flex-direction: column; gap: 10px; }
+.sv .emos { display: flex; justify-content: center; gap: 6px; }
+.sv .emos button { background: rgba(255,255,255,.14); border: 0; border-radius: 50%; width: 42px; height: 42px; font-size: 22px; line-height: 1; padding: 0; transition: transform .15s; }
+.sv .emos button:active { transform: scale(1.3); }
+.sv .srow { display: flex; gap: 8px; }
+.sv .sreply { flex: 1; min-width: 0; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.45); color: #fff; border-radius: 999px; padding: 11px 16px; }
+.sv .sreply::placeholder { color: rgba(255,255,255,.75); }
+.sv .sreply:focus { outline: none; border-color: #fff; background: rgba(0,0,0,.55); }
+.sv .ssend { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 50%; border: 0; background: #fff; color: #000; display: grid; place-items: center; padding: 0; }
+.sv .flo { position: absolute; left: 50%; bottom: 90px; font-size: 34px; z-index: 6; pointer-events: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .sv { animation: sv-in .25s ease-out; }
+  .sv.closing { animation: out .2s ease-in forwards; }
+  .sv .frame img.kb { animation: kb 7s ease-out both; }
+  .sv .scap span { animation: slide-up .5s .15s cubic-bezier(.2,.7,.2,1) backwards; }
+  .sv .frame.in-next { animation: s-in-r .34s cubic-bezier(.2,.8,.2,1); }
+  .sv .frame.in-prev { animation: s-in-l .34s cubic-bezier(.2,.8,.2,1); }
+  .sv .frame.in-unext { animation: u-in-r .42s cubic-bezier(.2,.8,.2,1); transform-origin: left center; }
+  .sv .frame.in-uprev { animation: u-in-l .42s cubic-bezier(.2,.8,.2,1); transform-origin: right center; }
+  .sv .ghost.out-next { animation: s-out-l .34s ease-in forwards; }
+  .sv .ghost.out-prev { animation: s-out-r .34s ease-in forwards; }
+  .sv .ghost.out-unext { animation: u-out-l .42s ease-in forwards; transform-origin: right center; }
+  .sv .ghost.out-uprev { animation: u-out-r .42s ease-in forwards; transform-origin: left center; }
+  .sv .flo { animation: floaty 1.6s var(--d, 0ms) ease-out forwards; }
+  .story.seen .ringwrap::before { animation: none; }
+  .bn-fallback { animation: bn-move 14s ease-in-out infinite alternate; }
+  @keyframes kb { from { transform: scale(1); } to { transform: scale(1.07); } }
+  @keyframes s-in-r { from { transform: translateX(34%) scale(.94); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes s-in-l { from { transform: translateX(-34%) scale(.94); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes s-out-l { to { transform: translateX(-34%) scale(.94); opacity: 0; } }
+  @keyframes s-out-r { to { transform: translateX(34%) scale(.94); opacity: 0; } }
+  @keyframes u-in-r { from { transform: perspective(900px) rotateY(-70deg); opacity: .2; } to { transform: perspective(900px) rotateY(0); opacity: 1; } }
+  @keyframes u-in-l { from { transform: perspective(900px) rotateY(70deg); opacity: .2; } to { transform: perspective(900px) rotateY(0); opacity: 1; } }
+  @keyframes u-out-l { to { transform: perspective(900px) rotateY(70deg); opacity: 0; } }
+  @keyframes u-out-r { to { transform: perspective(900px) rotateY(-70deg); opacity: 0; } }
+  @keyframes floaty { 0% { transform: translate(0, 0) scale(.4) rotate(0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(var(--x, 0), -55vh) scale(1.25) rotate(var(--r, 0)); opacity: 0; } }
+  @keyframes bn-move { to { background-position: 100% 100%; } }
 }
