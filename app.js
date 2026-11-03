@@ -1,0 +1,1107 @@
+(function () {
+  'use strict';
+
+  /* ================= kurulum ================= */
+  var CFG = window.KARE_CONFIG;
+  var BUCKET = 'media';
+  var PAGE = 12;
+  var MAX_VIDEO = 50 * 1024 * 1024;
+  var sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey);
+  var state = { session: null, me: null, following: new Set() };
+  var routeTok = 0;
+  var lastUid = undefined;
+
+  /* ================= küçük yardımcılar ================= */
+  function $(s, r) { return (r || document).querySelector(s); }
+  function h(tag, props) {
+    var el = document.createElement(tag);
+    var p = props || {};
+    Object.keys(p).forEach(function (k) {
+      var v = p[k];
+      if (v == null || v === false) return;
+      if (k === 'class') el.className = v;
+      else if (k === 'style' && typeof v === 'object') {
+        Object.keys(v).forEach(function (sk) {
+          if (sk.indexOf('--') === 0) el.style.setProperty(sk, v[sk]); else el.style[sk] = v[sk];
+        });
+      }
+      else if (k.indexOf('on') === 0 && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+      else if (v === true) el.setAttribute(k, '');
+      else el.setAttribute(k, v);
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      [].concat(arguments[i]).flat(Infinity).forEach(function (c) {
+        if (c == null || c === false) return;
+        el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+      });
+    }
+    return el;
+  }
+
+  var ICONS = {
+    home: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+    bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    heart: '<path d="M12 21s-8-5.2-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.8-8 11-8 11z"/>',
+    comment: '<path d="M21 12a8 8 0 0 1-11.5 7.2L3 21l1.8-5.5A8 8 0 1 1 21 12z"/>',
+    repeat: '<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+    x: '<path d="M6 6l12 12M18 6L6 18"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+    moon: '<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/>',
+    volume: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>',
+    mute: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/>',
+    play: '<path d="M7 4l13 8-13 8z"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+    back: '<path d="M15 5l-7 7 7 7"/>',
+    send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>',
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    link: '<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>'
+  };
+  function icon(name, cls) {
+    var w = document.createElement('span');
+    w.className = 'ico' + (name === 'more' || name === 'play' ? ' fill' : '') + (cls ? ' ' + cls : '');
+    w.setAttribute('aria-hidden', 'true');
+    w.innerHTML = '<svg viewBox="0 0 24 24">' + ICONS[name] + '</svg>';
+    return w;
+  }
+
+  var nf = new Intl.NumberFormat('tr', { notation: 'compact' });
+  function fmt(n) { return nf.format(n || 0); }
+  function cnt(rel) { return rel && rel[0] ? rel[0].count || 0 : 0; }
+  function timeAgo(iso) {
+    var s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (s < 45) return 'şimdi';
+    var m = s / 60; if (m < 60) return Math.round(m) + ' dk';
+    var hr = m / 60; if (hr < 24) return Math.round(hr) + ' sa';
+    var d = hr / 24; if (d < 7) return Math.round(d) + ' g';
+    return new Date(iso).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+  }
+  function mediaUrl(path) {
+    return CFG.supabaseUrl + '/storage/v1/object/public/' + BUCKET + '/' + path.split('/').map(encodeURIComponent).join('/');
+  }
+  function clamp(n, a, b) { return Math.min(b, Math.max(a, n)); }
+  function arOf(p) { return p.width && p.height ? clamp(p.width / p.height, 0.8, 1.5) : 1; }
+  function nameOf(pr) { return (pr && (pr.display_name || pr.username)) || 'Biri'; }
+
+  function toast(msg, isErr) {
+    var t = h('div', { class: 'toast' + (isErr ? ' err' : '') }, msg);
+    $('#toasts').append(t);
+    setTimeout(function () { t.remove(); }, 3600);
+  }
+  function friendlyError(e) {
+    var m = (e && (e.message || e.error_description || e.msg)) || '';
+    if (/Invalid login credentials/i.test(m)) return 'E-posta veya şifre hatalı.';
+    if (/Email not confirmed/i.test(m)) return 'E-postanı henüz doğrulamadın. Gelen kutunu kontrol et.';
+    if (/already registered|already been registered/i.test(m)) return 'Bu e-posta zaten kayıtlı.';
+    if (/at least \d+ characters/i.test(m)) return 'Şifre en az 6 karakter olmalı.';
+    if (/rate limit|too many/i.test(m)) return 'Çok fazla deneme yapıldı. Biraz bekleyip tekrar dene.';
+    if (/Database error saving new user/i.test(m)) return 'Kayıt tamamlanamadı. Kullanıcı adını değiştirip tekrar dene.';
+    if (/exceeded the maximum allowed size|too large|Payload too large/i.test(m)) return 'Dosya çok büyük (en fazla 50 MB).';
+    if (/mime type|not supported/i.test(m)) return 'Bu dosya türü desteklenmiyor.';
+    if (/Failed to fetch|NetworkError|network/i.test(m)) return 'Bağlantı kurulamadı. İnternetini kontrol et.';
+    return m && m.length < 140 ? m : 'Bir sorun oluştu. Tekrar dene.';
+  }
+
+  /* ---- kaydırma kilidi ve pencereler ---- */
+  var locks = 0;
+  function lock() { if (locks++ === 0) document.body.classList.add('locked'); }
+  function unlock() { if (--locks <= 0) { locks = 0; document.body.classList.remove('locked'); } }
+  var modals = [];
+  function modal(content, label) {
+    var back = h('div', { class: 'modal-back', role: 'dialog', 'aria-modal': 'true', 'aria-label': label || 'Pencere' });
+    var box = h('div', { class: 'modal' }, content);
+    back.append(box);
+    var prev = document.activeElement;
+    var closed = false;
+    function close() {
+      if (closed) return;
+      closed = true;
+      modals = modals.filter(function (m) { return m !== api; });
+      back.classList.add('out');
+      setTimeout(function () { back.remove(); }, 180);
+      unlock();
+      if (prev && prev.focus) { try { prev.focus(); } catch (e) {} }
+    }
+    var api = { close: close, el: box };
+    back.addEventListener('mousedown', function (ev) { if (ev.target === back) close(); });
+    document.body.append(back);
+    lock();
+    modals.push(api);
+    var first = box.querySelector('input, textarea, button');
+    if (first) setTimeout(function () { try { first.focus(); } catch (e) {} }, 30);
+    return api;
+  }
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && modals.length && !document.querySelector('.sv')) modals[modals.length - 1].close();
+  });
+  function confirmModal(text, okLabel, danger) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var m;
+      function fin(v) { if (done) return; done = true; m.close(); resolve(v); }
+      m = modal(h('div', { style: { display: 'contents' } },
+        h('h2', null, text),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn quiet', type: 'button', onclick: function () { fin(false); } }, 'Vazgeç'),
+          h('button', { class: 'btn' + (danger ? ' danger' : ''), type: 'button', onclick: function () { fin(true); } }, okLabel || 'Tamam'))), text);
+      var back = m.el.parentNode;
+      new MutationObserver(function (_, obs) { if (!document.body.contains(back)) { obs.disconnect(); fin(false); } }).observe(document.body, { childList: true });
+    });
+  }
+
+  /* ================= oturum ================= */
+  async function loadMe() {
+    var s = state.session;
+    state.me = null; state.following = new Set();
+    if (!s) return;
+    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path').eq('id', s.user.id).maybeSingle();
+    state.me = r.data || null;
+    var f = await sb.from('follows').select('following_id').eq('follower_id', s.user.id);
+    (f.data || []).forEach(function (x) { state.following.add(x.following_id); });
+  }
+  sb.auth.onAuthStateChange(function (ev, session) {
+    state.session = session;
+    var uid = session ? session.user.id : null;
+    if (uid === lastUid) return;
+    lastUid = uid;
+    // onAuthStateChange içinde doğrudan Supabase çağrısı yapmamak için erteliyoruz
+    setTimeout(function () {
+      loadMe().then(function () { renderHeader(); route(); });
+    }, 0);
+  });
+
+  function requireLogin() {
+    if (state.me) return true;
+    authModal('in');
+    return false;
+  }
+
+  function authModal(startMode) {
+    var mode = startMode || 'in';
+    var host = h('div', { style: { display: 'contents' } });
+    var m = modal(host, 'Giriş');
+    function draw() {
+      var err = h('div', { class: 'hint bad', role: 'alert' });
+      var email = h('input', { class: 'input', id: 'a-email', type: 'email', autocomplete: 'email', required: true, placeholder: 'ornek@mail.com' });
+      var pass = h('input', { class: 'input', id: 'a-pass', type: 'password', autocomplete: mode === 'in' ? 'current-password' : 'new-password', required: true, minlength: '6', placeholder: 'En az 6 karakter' });
+      var uname = null, uhint = null;
+      var submit = h('button', { class: 'btn', type: 'submit' }, mode === 'in' ? 'Giriş yap' : 'Hesap oluştur');
+      var fields = [
+        h('div', { class: 'field' }, h('label', { for: 'a-email' }, 'E-posta'), email)
+      ];
+      var unameOk = mode === 'in';
+      if (mode === 'up') {
+        uname = h('input', { class: 'input', id: 'a-user', type: 'text', autocomplete: 'username', required: true, maxlength: '24', placeholder: 'kullanici_adi', autocapitalize: 'none', spellcheck: 'false' });
+        uhint = h('div', { class: 'hint' }, '3-24 karakter: küçük harf, rakam ve alt çizgi.');
+        var timer = null;
+        uname.addEventListener('input', function () {
+          unameOk = false;
+          var v = uname.value.trim().toLowerCase();
+          clearTimeout(timer);
+          if (!/^[a-z0-9_]{3,24}$/.test(v)) { uhint.className = 'hint bad'; uhint.textContent = '3-24 karakter: küçük harf, rakam ve alt çizgi.'; return; }
+          uhint.className = 'hint'; uhint.textContent = 'Kontrol ediliyor';
+          timer = setTimeout(async function () {
+            var r = await sb.rpc('username_available', { name: v });
+            if (uname.value.trim().toLowerCase() !== v) return;
+            if (r.error) { uhint.className = 'hint'; uhint.textContent = ''; unameOk = true; return; }
+            unameOk = !!r.data;
+            uhint.className = 'hint ' + (r.data ? 'ok' : 'bad');
+            uhint.textContent = r.data ? 'Bu kullanıcı adı boş.' : 'Bu kullanıcı adı alınmış.';
+          }, 400);
+        });
+        fields.push(h('div', { class: 'field' }, h('label', { for: 'a-user' }, 'Kullanıcı adı'), uname, uhint));
+      }
+      fields.push(h('div', { class: 'field' }, h('label', { for: 'a-pass' }, 'Şifre'), pass));
+      var form = h('form', { style: { display: 'flex', flexDirection: 'column', gap: '14px' }, novalidate: true }, fields, err, submit);
+      form.addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        err.textContent = '';
+        var em = email.value.trim(), pw = pass.value;
+        if (!em || !/.+@.+\..+/.test(em)) { err.textContent = 'Geçerli bir e-posta yaz.'; return; }
+        if (pw.length < 6) { err.textContent = 'Şifre en az 6 karakter olmalı.'; return; }
+        submit.disabled = true;
+        try {
+          if (mode === 'in') {
+            var r = await sb.auth.signInWithPassword({ email: em, password: pw });
+            if (r.error) throw r.error;
+            m.close();
+            toast('Hoş geldin!');
+          } else {
+            var un = uname.value.trim().toLowerCase();
+            if (!/^[a-z0-9_]{3,24}$/.test(un)) { err.textContent = 'Kullanıcı adı 3-24 karakter olmalı: küçük harf, rakam, alt çizgi.'; submit.disabled = false; return; }
+            if (!unameOk) { err.textContent = 'Bu kullanıcı adı alınmış ya da henüz kontrol edilmedi.'; submit.disabled = false; return; }
+            var r2 = await sb.auth.signUp({ email: em, password: pw, options: { data: { username: un } } });
+            if (r2.error) throw r2.error;
+            if (r2.data.session) { m.close(); toast('Hesabın hazır, hoş geldin!'); }
+            else {
+              host.replaceChildren(h('h2', null, 'E-postanı kontrol et'),
+                h('p', { style: { margin: 0 } }, em + ' adresine bir doğrulama bağlantısı gönderdik. Bağlantıya tıkladıktan sonra giriş yapabilirsin.'),
+                h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: function () { m.close(); } }, 'Tamam')));
+              return;
+            }
+          }
+        } catch (e) { err.textContent = friendlyError(e); submit.disabled = false; }
+      });
+      host.replaceChildren(
+        h('h2', null, mode === 'in' ? 'Giriş yap' : 'Kare\'ye katıl'),
+        form,
+        h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } },
+          h('span', { class: 'hint' }, mode === 'in' ? 'Hesabın yok mu?' : 'Zaten hesabın var mı?'),
+          h('button', { class: 'btn quiet small', type: 'button', onclick: function () { mode = mode === 'in' ? 'up' : 'in'; draw(); } }, mode === 'in' ? 'Kayıt ol' : 'Giriş yap')));
+    }
+    draw();
+  }
+
+  /* ================= üst çubuk ================= */
+  function effectiveTheme() {
+    return document.documentElement.getAttribute('data-theme') || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  }
+  function avatarEl(pr, size, cls) {
+    var el = h('span', { class: 'av' + (cls ? ' ' + cls : ''), style: { '--s': (size || 40) + 'px' } });
+    if (pr && pr.avatar_path) {
+      var img = h('img', { src: mediaUrl(pr.avatar_path), alt: '', loading: 'lazy', decoding: 'async' });
+      img.addEventListener('error', function () { img.remove(); el.textContent = (nameOf(pr)[0] || '?'); });
+      el.append(img);
+    } else el.textContent = (nameOf(pr)[0] || '?');
+    return el;
+  }
+  function currentSection() {
+    var p = location.hash.replace(/^#\/?/, '').split('/')[0];
+    return p || 'home';
+  }
+  function renderHeader() {
+    var sec = currentSection();
+    var themeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Temayı değiştir', onclick: function () {
+      var next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('kare_theme', next); } catch (e) {}
+      renderHeader();
+    } }, icon(effectiveTheme() === 'dark' ? 'sun' : 'moon'));
+    var nav = h('nav', { class: 'nav', 'aria-label': 'Ana menü' });
+    if (state.me) {
+      nav.append(
+        h('a', { class: 'icon-btn' + (sec === 'home' ? ' active' : ''), href: '#/', 'aria-label': 'Ana sayfa' }, icon('home')),
+        h('a', { class: 'icon-btn' + (sec === 'favoriler' ? ' active' : ''), href: '#/favoriler', 'aria-label': 'Favoriler' }, icon('bookmark')),
+        h('button', { class: 'icon-btn add', type: 'button', 'aria-label': 'Paylaş', onclick: function () { uploadModal('post'); } }, icon('plus')),
+        themeBtn,
+        h('a', { class: 'icon-btn', href: '#/u/' + encodeURIComponent(state.me.username), 'aria-label': 'Profilim' }, avatarEl(state.me, 30))
+      );
+    } else {
+      nav.append(themeBtn, h('button', { class: 'btn small', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'),
+        h('button', { class: 'btn quiet small', type: 'button', onclick: function () { authModal('up'); } }, 'Kayıt ol'));
+    }
+    $('#top').replaceChildren(
+      h('a', { class: 'logo', href: '#/', 'aria-label': 'Kare ana sayfa' }, h('span', { class: 'film', 'aria-hidden': 'true' }), 'kare'),
+      nav);
+  }
+
+  /* ================= medya hazırlama ve yükleme ================= */
+  function videoDims(file) {
+    return new Promise(function (resolve) {
+      var v = document.createElement('video');
+      var url = URL.createObjectURL(file);
+      var t = setTimeout(function () { fin({ w: 0, h: 0 }); }, 4000);
+      function fin(d) { clearTimeout(t); URL.revokeObjectURL(url); resolve(d); }
+      v.preload = 'metadata'; v.muted = true;
+      v.onloadedmetadata = function () { fin({ w: v.videoWidth, h: v.videoHeight }); };
+      v.onerror = function () { fin({ w: 0, h: 0 }); };
+      v.src = url;
+    });
+  }
+  async function prepareMedia(file, opts) {
+    opts = opts || {};
+    var max = opts.max || 1600;
+    if (file.type.indexOf('video/') === 0) {
+      if (opts.imageOnly) throw new Error('Burada sadece fotoğraf seçebilirsin.');
+      if (['video/mp4', 'video/webm', 'video/quicktime'].indexOf(file.type) < 0) throw new Error('Video MP4, WebM veya MOV olmalı.');
+      if (file.size > MAX_VIDEO) throw new Error('Video en fazla 50 MB olabilir.');
+      var d = await videoDims(file);
+      return { blob: file, type: 'video', contentType: file.type, ext: file.type === 'video/webm' ? 'webm' : file.type === 'video/quicktime' ? 'mov' : 'mp4', w: d.w, h: d.h };
+    }
+    if (file.type.indexOf('image/') !== 0) throw new Error('Lütfen fotoğraf ya da video seç.');
+    var bmp;
+    try { bmp = await createImageBitmap(file); } catch (e) { throw new Error('Bu fotoğraf açılamadı. JPG, PNG veya WebP dene.'); }
+    var w = bmp.width, hh = bmp.height;
+    if (file.type === 'image/gif' && !opts.square && file.size <= 15 * 1024 * 1024) {
+      if (bmp.close) bmp.close();
+      return { blob: file, type: 'image', contentType: 'image/gif', ext: 'gif', w: w, h: hh };
+    }
+    var sx = 0, sy = 0, sw = w, sh = hh, cw, ch;
+    if (opts.square) { var side = Math.min(w, hh); sx = (w - side) / 2; sy = (hh - side) / 2; sw = side; sh = side; }
+    var scale = Math.min(1, max / Math.max(sw, sh));
+    cw = Math.round(sw * scale); ch = Math.round(sh * scale);
+    var cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    var ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, cw, ch);
+    if (bmp.close) bmp.close();
+    var blob = await new Promise(function (res) { cv.toBlob(res, 'image/jpeg', 0.86); });
+    if (!blob) throw new Error('Fotoğraf işlenemedi.');
+    return { blob: blob, type: 'image', contentType: 'image/jpeg', ext: 'jpg', w: cw, h: ch };
+  }
+  async function uploadPrepared(prep, prefix) {
+    var path = state.me.id + '/' + (prefix || '') + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8) + '.' + prep.ext;
+    var r = await sb.storage.from(BUCKET).upload(path, prep.blob, { contentType: prep.contentType, cacheControl: '31536000', upsert: false });
+    if (r.error) throw r.error;
+    return path;
+  }
+  function removeFile(path) { if (path) sb.storage.from(BUCKET).remove([path]).then(function () {}, function () {}); }
+
+  function uploadModal(startKind) {
+    if (!requireLogin()) return;
+    var kind = startKind || 'post';
+    var prep = null, previewUrl = null, busy = false;
+    var host = h('div', { style: { display: 'contents' } });
+    var m = modal(host, 'Paylaş');
+    var fileInput = h('input', { class: 'sr', id: 'u-file', type: 'file', accept: 'image/*,video/mp4,video/webm,video/quicktime' });
+    var err = h('div', { class: 'hint bad', role: 'alert' });
+    var caption = h('textarea', { class: 'textarea', id: 'u-cap', maxlength: '2000', placeholder: 'Bir şeyler yaz (isteğe bağlı)' });
+    var preview = h('div', { class: 'preview', hidden: true });
+    var dropEl = h('label', { class: 'drop', for: 'u-file' }, icon('image'), h('b', null, 'Fotoğraf veya video seç'), h('span', { class: 'hint' }, 'Sürükleyip bırakabilirsin. Video en fazla 50 MB.'));
+    var capField = h('div', { class: 'field' }, h('label', { for: 'u-cap' }, 'Açıklama'), caption);
+    var prog = h('div', { class: 'progress', hidden: true }, h('i'));
+    var submit = h('button', { class: 'btn', type: 'button', disabled: true }, 'Paylaş');
+    var segPost = h('button', { type: 'button', 'aria-pressed': 'true', onclick: function () { setKind('post'); } }, 'Paylaşım');
+    var segStory = h('button', { type: 'button', 'aria-pressed': 'false', onclick: function () { setKind('story'); } }, 'Hikaye (24 saat)');
+    function setKind(k) {
+      kind = k;
+      segPost.setAttribute('aria-pressed', k === 'post' ? 'true' : 'false');
+      segStory.setAttribute('aria-pressed', k === 'story' ? 'true' : 'false');
+      capField.hidden = k === 'story';
+    }
+    async function pick(file) {
+      err.textContent = '';
+      if (!file) return;
+      try {
+        submit.disabled = true;
+        prep = await prepareMedia(file);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(prep.blob);
+        var el = prep.type === 'video' ? h('video', { src: previewUrl, controls: true, playsinline: true, muted: true }) : h('img', { src: previewUrl, alt: 'Önizleme' });
+        preview.replaceChildren(el); preview.hidden = false; dropEl.hidden = true;
+        submit.disabled = false;
+      } catch (e) { prep = null; err.textContent = friendlyError(e); }
+    }
+    fileInput.addEventListener('change', function () { pick(fileInput.files[0]); });
+    ['dragenter', 'dragover'].forEach(function (n) { dropEl.addEventListener(n, function (ev) { ev.preventDefault(); dropEl.classList.add('over'); }); });
+    ['dragleave', 'drop'].forEach(function (n) { dropEl.addEventListener(n, function (ev) { ev.preventDefault(); dropEl.classList.remove('over'); }); });
+    dropEl.addEventListener('drop', function (ev) { if (ev.dataTransfer.files[0]) pick(ev.dataTransfer.files[0]); });
+    var cancel = h('button', { class: 'btn quiet', type: 'button', onclick: function () { if (!busy) m.close(); } }, 'Vazgeç');
+    submit.addEventListener('click', async function () {
+      if (!prep || busy) return;
+      busy = true; submit.disabled = true; cancel.disabled = true; prog.hidden = false; err.textContent = '';
+      var path = null;
+      try {
+        path = await uploadPrepared(prep, kind === 'story' ? 's-' : '');
+        var row;
+        if (kind === 'story') {
+          row = await sb.from('stories').insert({ user_id: state.me.id, media_path: path, media_type: prep.type });
+        } else {
+          row = await sb.from('posts').insert({ user_id: state.me.id, caption: caption.value.trim() || null, media_path: path, media_type: prep.type, width: prep.w || null, height: prep.h || null });
+        }
+        if (row.error) throw row.error;
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        m.close();
+        toast(kind === 'story' ? 'Hikayen yayında.' : 'Paylaşıldı!');
+        if (location.hash === '' || location.hash === '#/' || location.hash === '#') route(); else location.hash = '#/';
+      } catch (e) {
+        if (path) removeFile(path);
+        err.textContent = friendlyError(e);
+        busy = false; submit.disabled = false; cancel.disabled = false; prog.hidden = true;
+      }
+    });
+    host.append(
+      h('h2', null, 'Paylaş'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Ne paylaşacaksın' }, segPost, segStory),
+      fileInput, dropEl, preview, capField, prog, err,
+      h('p', { class: 'hint', style: { margin: 0 } }, 'Başkalarına ait ya da uygunsuz içerik paylaşma.'),
+      h('div', { class: 'row' }, cancel, submit));
+    setKind(kind);
+  }
+
+  /* ================= veri katmanı ================= */
+  var PROFILE_SEL = 'id,username,display_name,avatar_path';
+  var POST_SEL = 'id,user_id,caption,media_path,media_type,width,height,created_at,author:profiles!posts_user_id_fkey(' + PROFILE_SEL + '),likes(count),comments(count),reposts(count)';
+  var GRID_SEL = 'id,media_path,media_type,likes(count),comments(count)';
+  function ms(iso) { return new Date(iso).getTime(); }
+
+  async function attachMine(items) {
+    var ids = Array.from(new Set(items.map(function (i) { return i.post.id; })));
+    var sets = { likes: new Set(), favorites: new Set(), reposts: new Set() };
+    if (state.me && ids.length) {
+      var uid = state.me.id;
+      var res = await Promise.all(['likes', 'favorites', 'reposts'].map(function (t) {
+        return sb.from(t).select('post_id').eq('user_id', uid).in('post_id', ids);
+      }));
+      ['likes', 'favorites', 'reposts'].forEach(function (t, i) {
+        (res[i].data || []).forEach(function (r) { sets[t].add(r.post_id); });
+      });
+    }
+    items.forEach(function (i) {
+      i.mine = { liked: sets.likes.has(i.post.id), fav: sets.favorites.has(i.post.id), rep: sets.reposts.has(i.post.id) };
+    });
+    return items;
+  }
+
+  async function fetchFeed(tab, before) {
+    var follow = null;
+    if (tab === 'follow') {
+      follow = Array.from(state.following);
+      if (!follow.length) return { items: [], cursor: null };
+    }
+    var RP = Math.ceil(PAGE / 2);
+    var pq = sb.from('posts').select(POST_SEL).order('created_at', { ascending: false }).limit(PAGE);
+    var rq = sb.from('reposts').select('created_at,user_id,reposter:profiles!reposts_user_id_fkey(' + PROFILE_SEL + '),post:posts!reposts_post_id_fkey(' + POST_SEL + ')').order('created_at', { ascending: false }).limit(RP);
+    if (before) { pq = pq.lt('created_at', before); rq = rq.lt('created_at', before); }
+    if (follow) { pq = pq.in('user_id', follow); rq = rq.in('user_id', follow); }
+    var res = await Promise.all([pq, rq]);
+    if (res[0].error) throw res[0].error;
+    if (res[1].error) throw res[1].error;
+    var items = [];
+    res[0].data.forEach(function (p) { items.push({ key: 'p' + p.id, post: p, sortAt: p.created_at, repostedBy: null }); });
+    res[1].data.forEach(function (r) { if (r.post) items.push({ key: 'r' + r.post.id + r.user_id, post: r.post, sortAt: r.created_at, repostedBy: r.reposter }); });
+    items.sort(function (a, b) { return ms(b.sortAt) - ms(a.sortAt); });
+    var boundary = null;
+    if (res[0].data.length === PAGE) boundary = res[0].data[PAGE - 1].created_at;
+    if (res[1].data.length === RP) {
+      var b = res[1].data[RP - 1].created_at;
+      if (!boundary || ms(b) > ms(boundary)) boundary = b;
+    }
+    if (boundary) items = items.filter(function (i) { return ms(i.sortAt) >= ms(boundary); });
+    await attachMine(items);
+    return { items: items, cursor: boundary };
+  }
+
+  /* ================= paylaşım kartı ================= */
+  var vio = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      var v = e.target;
+      if (e.isIntersecting && e.intersectionRatio >= 0.6) { if (!v._userPaused) v.play().catch(function () {}); }
+      else v.pause();
+    });
+  }, { threshold: [0, 0.6] }) : null;
+
+  function mediaEl(p, onTap, onDouble) {
+    var box = h('div', { class: 'media', style: { '--ar': String(arOf(p)) } });
+    var v = null;
+    if (p.media_type === 'video') {
+      v = h('video', { src: mediaUrl(p.media_path), playsinline: true, loop: true, preload: 'metadata', 'aria-label': 'Video' });
+      v.muted = true;
+      var mute = h('button', { class: 'mute', type: 'button', 'aria-label': 'Sesi aç/kapat', onclick: function (ev) { ev.stopPropagation(); v.muted = !v.muted; mute.replaceChildren(icon(v.muted ? 'mute' : 'volume')); } }, icon('mute'));
+      box.append(v, h('div', { class: 'pp' }, h('span', null, icon('play'))), mute);
+      if (vio) vio.observe(v);
+    } else {
+      var img = h('img', { src: mediaUrl(p.media_path), alt: p.caption ? p.caption.slice(0, 100) : 'Paylaşım', loading: 'lazy', decoding: 'async' });
+      box.append(img);
+    }
+    var last = 0, timer = null;
+    box.addEventListener('click', function () {
+      var now = Date.now();
+      if (now - last < 320) { clearTimeout(timer); last = 0; onDouble(box); return; }
+      last = now;
+      timer = setTimeout(function () {
+        if (v) {
+          if (v.paused) { v._userPaused = false; v.play().catch(function () {}); box.classList.remove('paused'); }
+          else { v._userPaused = true; v.pause(); box.classList.add('paused'); }
+        } else if (onTap) onTap();
+      }, 260);
+    });
+    return box;
+  }
+
+  function postCard(item, opts) {
+    opts = opts || {};
+    var p = item.post;
+    var st = { liked: !!item.mine.liked, fav: !!item.mine.fav, rep: !!item.mine.rep, likes: cnt(p.likes), comments: cnt(p.comments), reposts: cnt(p.reposts) };
+    var author = p.author || {};
+    var card = h('article', { class: 'card' + (opts.enter ? ' enter' : ''), style: { '--i': String(opts.i || 0) } });
+
+    if (item.repostedBy) {
+      card.append(h('div', { class: 'repost-note' }, icon('repeat'), h('a', { href: '#/u/' + encodeURIComponent(item.repostedBy.username) }, nameOf(item.repostedBy) + ' repost etti')));
+    }
+
+    var menu = null;
+    var moreBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Daha fazla', 'aria-haspopup': 'menu', onclick: function (ev) {
+      ev.stopPropagation();
+      if (menu) { menu.remove(); menu = null; return; }
+      menu = h('div', { class: 'menu', role: 'menu' });
+      menu.append(h('button', { type: 'button', role: 'menuitem', onclick: function () { copyLink(p.id); closeMenu(); } }, icon('link'), 'Bağlantıyı kopyala'));
+      if (state.me && state.me.id === p.user_id) {
+        menu.append(h('button', { type: 'button', role: 'menuitem', class: 'danger', onclick: function () { closeMenu(); deletePost(p, card, opts); } }, icon('trash'), 'Sil'));
+      } else {
+        menu.append(h('button', { type: 'button', role: 'menuitem', onclick: function () { closeMenu(); reportModal('post', p.id); } }, icon('flag'), 'Şikayet et'));
+      }
+      card.append(menu);
+      setTimeout(function () { document.addEventListener('click', closeMenu, { once: true }); }, 0);
+    } }, icon('more'));
+    function closeMenu() { if (menu) { menu.remove(); menu = null; } }
+
+    card.append(h('div', { class: 'card-head' },
+      h('a', { href: '#/u/' + encodeURIComponent(author.username || '') }, avatarEl(author, 40)),
+      h('div', { class: 'who' },
+        h('a', { href: '#/u/' + encodeURIComponent(author.username || '') }, h('b', null, nameOf(author))),
+        h('span', { class: 'mono' }, '@' + (author.username || '') + ' · ' + timeAgo(p.created_at))),
+      moreBtn));
+
+    function burstHeart(box) {
+      var b = h('div', { class: 'burst' }, icon('heart'));
+      box.append(b);
+      setTimeout(function () { b.remove(); }, 850);
+    }
+    var media = mediaEl(p, function () { if (!opts.detail) location.hash = '#/p/' + p.id; }, function (box) {
+      burstHeart(box);
+      if (!st.liked) toggle('likes', likeBtn, 'liked', 'likes');
+    });
+    card.append(media);
+
+    function mk(kind, ico, label) {
+      return h('button', { class: 'act', type: 'button', 'data-k': kind, 'aria-label': label, 'aria-pressed': 'false' }, icon(ico), h('span', { class: 'n' }));
+    }
+    var likeBtn = mk('like', 'heart', 'Beğen');
+    var repBtn = mk('repost', 'repeat', 'Repost');
+    var favBtn = mk('fav', 'bookmark', 'Favorilere ekle');
+    var comBtn = h('a', { class: 'act', href: '#/p/' + p.id, 'aria-label': 'Yorumlar' }, icon('comment'), h('span', { class: 'n' }));
+    function paint() {
+      [[likeBtn, st.liked, st.likes], [repBtn, st.rep, st.reposts], [favBtn, st.fav, 0]].forEach(function (x) {
+        x[0].classList.toggle('on', x[1]);
+        x[0].setAttribute('aria-pressed', x[1] ? 'true' : 'false');
+        $('.n', x[0]).textContent = x[2] ? fmt(x[2]) : '';
+      });
+      $('.n', comBtn).textContent = st.comments ? fmt(st.comments) : '';
+    }
+    async function toggle(table, btn, key, countKey) {
+      if (!requireLogin()) return;
+      if (btn._busy) return;
+      btn._busy = true;
+      var want = !st[key];
+      st[key] = want;
+      if (countKey) st[countKey] += want ? 1 : -1;
+      paint();
+      if (want) { btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop'); }
+      var q = want ? sb.from(table).insert({ post_id: p.id, user_id: state.me.id }) : sb.from(table).delete().match({ post_id: p.id, user_id: state.me.id });
+      var r = await q;
+      if (r.error && !(want && r.error.code === '23505')) {
+        st[key] = !want;
+        if (countKey) st[countKey] += want ? -1 : 1;
+        paint();
+        toast(friendlyError(r.error), true);
+      }
+      btn._busy = false;
+    }
+    likeBtn.addEventListener('click', function () { toggle('likes', likeBtn, 'liked', 'likes'); });
+    repBtn.addEventListener('click', function () {
+      if (state.me && state.me.id === p.user_id) { toast('Kendi paylaşımını repost edemezsin.'); return; }
+      toggle('reposts', repBtn, 'rep', 'reposts').then(function () { if (st.rep) toast('Profiline repost edildi.'); });
+    });
+    favBtn.addEventListener('click', function () { toggle('favorites', favBtn, 'fav', null).then(function () { if (st.fav) toast('Favorilere eklendi.'); }); });
+    card.append(h('div', { class: 'actions' }, likeBtn, comBtn, repBtn, h('span', { class: 'sp' }), favBtn));
+    paint();
+
+    var body = h('div', { class: 'card-body' });
+    if (p.caption) body.append(h('p', { class: 'caption' }, h('b', null, author.username || ''), p.caption));
+    if (!opts.detail && st.comments > 0) body.append(h('a', { class: 'more-link', href: '#/p/' + p.id }, st.comments === 1 ? '1 yorumu gör' : st.comments + ' yorumun tümünü gör'));
+    if (body.childNodes.length) card.append(body);
+    card.bumpComments = function (d) { st.comments += d; paint(); };
+    return card;
+  }
+
+  function copyLink(id) {
+    var url = location.origin + location.pathname + '#/p/' + id;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () { toast('Bağlantı kopyalandı.'); }, function () { toast(url); });
+    } else toast(url);
+  }
+  async function deletePost(p, card, opts) {
+    var ok = await confirmModal('Bu paylaşım silinsin mi?', 'Sil', true);
+    if (!ok) return;
+    var r = await sb.from('posts').delete().eq('id', p.id);
+    if (r.error) { toast(friendlyError(r.error), true); return; }
+    removeFile(p.media_path);
+    toast('Paylaşım silindi.');
+    if (opts && opts.detail) location.hash = '#/'; else card.remove();
+  }
+  function reportModal(type, id) {
+    if (!requireLogin()) return;
+    var reasons = ['Spam', 'Uygunsuz içerik', 'Taciz veya nefret', 'Başka bir sebep'];
+    var chosen = reasons[0];
+    var note = h('textarea', { class: 'textarea', maxlength: '300', placeholder: 'İstersen ayrıntı ekle', 'aria-label': 'Ayrıntı' });
+    var err = h('div', { class: 'hint bad', role: 'alert' });
+    var m;
+    var send = h('button', { class: 'btn', type: 'button', onclick: async function () {
+      send.disabled = true;
+      var reason = chosen + (note.value.trim() ? ': ' + note.value.trim() : '');
+      var r = await sb.from('reports').insert({ reporter_id: state.me.id, target_type: type, target_id: id, reason: reason.slice(0, 300) });
+      if (r.error) { err.textContent = friendlyError(r.error); send.disabled = false; return; }
+      m.close(); toast('Şikayetin alındı, teşekkürler.');
+    } }, 'Gönder');
+    m = modal(h('div', { style: { display: 'contents' } },
+      h('h2', null, 'Şikayet et'),
+      reasons.map(function (rs, i) {
+        return h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'rs', checked: i === 0, onchange: function () { chosen = rs; } }), rs);
+      }),
+      note, err,
+      h('div', { class: 'row' }, h('button', { class: 'btn quiet', type: 'button', onclick: function () { m.close(); } }, 'Vazgeç'), send)), 'Şikayet');
+  }
+
+  /* ================= hikayeler ================= */
+  var SEEN_KEY = 'kare_seen';
+  function seenSet() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); } catch (e) { return new Set(); } }
+  function markSeen(id) {
+    var s = seenSet(); s.add(id);
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s).slice(-400))); } catch (e) {}
+  }
+  async function fetchStoryGroups() {
+    var since = new Date(Date.now() - 864e5).toISOString();
+    var r = await sb.from('stories').select('id,user_id,media_path,media_type,created_at,author:profiles!stories_user_id_fkey(' + PROFILE_SEL + ')').gte('created_at', since).order('created_at', { ascending: true }).limit(300);
+    if (r.error) return [];
+    var map = {}, groups = [];
+    r.data.forEach(function (s) {
+      if (!map[s.user_id]) { map[s.user_id] = { user: s.author, stories: [] }; groups.push(map[s.user_id]); }
+      map[s.user_id].stories.push(s);
+    });
+    var seen = seenSet();
+    groups.forEach(function (g) { g.unseen = g.stories.some(function (s) { return !seen.has(s.id); }); g.latest = ms(g.stories[g.stories.length - 1].created_at); });
+    var myId = state.me && state.me.id;
+    groups.sort(function (a, b) {
+      if (a.user.id === myId) return -1; if (b.user.id === myId) return 1;
+      if (a.unseen !== b.unseen) return a.unseen ? -1 : 1;
+      return b.latest - a.latest;
+    });
+    return groups;
+  }
+  async function renderStoriesBar(host, tok) {
+    var groups = await fetchStoryGroups();
+    if (tok !== routeTok) return;
+    var bar = h('div', { class: 'stories', role: 'list', 'aria-label': 'Hikayeler' });
+    var myId = state.me && state.me.id;
+    var mine = groups.find(function (g) { return g.user.id === myId; });
+    if (state.me && !mine) {
+      bar.append(h('button', { class: 'story own-empty', type: 'button', role: 'listitem', 'aria-label': 'Hikaye ekle', onclick: function () { uploadModal('story'); } },
+        h('span', { class: 'ringwrap' }, avatarEl(state.me, 58), h('span', { class: 'plus' }, icon('plus'))),
+        h('span', { class: 'nm' }, 'Hikayen')));
+    }
+    groups.forEach(function (g, idx) {
+      var own = g.user.id === myId;
+      bar.append(h('button', { class: 'story' + (g.unseen ? '' : ' seen'), type: 'button', role: 'listitem', 'aria-label': nameOf(g.user) + ' hikayesi', onclick: function () { openStories(groups, idx, function () { renderStoriesBar(host, routeTok); }); } },
+        h('span', { class: 'ringwrap' }, avatarEl(g.user, 58)),
+        h('span', { class: 'nm' }, own ? 'Hikayen' : nameOf(g.user))));
+    });
+    host.replaceChildren(groups.length || state.me ? bar : '');
+  }
+
+  function openStories(groups, gi, onClose) {
+    var seen = seenSet();
+    var g = groups[gi];
+    var si = Math.max(0, g.stories.findIndex(function (s) { return !seen.has(s.id); }));
+    var raf = 0, running = false, t0 = 0, vid = null, cur = null, fill = null, closed = false;
+    var root = h('div', { class: 'sv', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Hikaye' });
+    document.body.append(root);
+    lock();
+    var DUR = 5000;
+    function stop() { running = false; cancelAnimationFrame(raf); if (vid) vid.pause(); }
+    function loop(now) {
+      if (!running) return;
+      var pct;
+      if (vid && vid.duration) pct = vid.currentTime / vid.duration;
+      else pct = (now - t0) / DUR;
+      if (fill) fill.style.transform = 'scaleX(' + Math.min(1, pct) + ')';
+      if (pct >= 1 || (vid && vid.ended)) { next(); return; }
+      raf = requestAnimationFrame(loop);
+    }
+    var elapsed = 0;
+    function play() {
+      if (running || closed) return;
+      running = true;
+      t0 = performance.now() - elapsed;
+      if (vid) vid.play().catch(function () { vid.muted = true; vid.play().catch(function () {}); });
+      raf = requestAnimationFrame(loop);
+    }
+    function pause() { if (!running) return; elapsed = performance.now() - t0; stop(); }
+    function close() {
+      if (closed) return;
+      closed = true; stop(); root.remove(); unlock();
+      document.removeEventListener('keydown', key);
+      if (onClose) onClose();
+    }
+    function next() {
+      if (si < g.stories.length - 1) { si++; show(); }
+      else if (gi < groups.length - 1) { gi++; g = groups[gi]; si = 0; show(); }
+      else close();
+    }
+    function prev() {
+      if (si > 0) { si--; show(); }
+      else if (gi > 0) { gi--; g = groups[gi]; si = 0; show(); }
+      else { elapsed = 0; show(); }
+    }
+    function key(ev) {
+      if (ev.key === 'Escape') close();
+      else if (ev.key === 'ArrowRight') next();
+      else if (ev.key === 'ArrowLeft') prev();
+    }
+    document.addEventListener('keydown', key);
+    function show() {
+      stop(); elapsed = 0;
+      cur = g.stories[si];
+      markSeen(cur.id);
+      var bars = h('div', { class: 'bars' });
+      g.stories.forEach(function (s, i) {
+        var b = h('b'); if (i < si) b.style.transform = 'scaleX(1)';
+        if (i === si) fill = b;
+        bars.append(h('i', null, b));
+      });
+      var own = state.me && cur.user_id === state.me.id;
+      var head = h('div', { class: 'shead' },
+        avatarEl(g.user, 36),
+        h('div', { class: 'who' }, h('b', null, nameOf(g.user)), h('span', { class: 'mono', style: { color: 'rgba(255,255,255,.8)' } }, timeAgo(cur.created_at))),
+        own ? h('button', { type: 'button', 'aria-label': 'Hikayeyi sil', onclick: async function () {
+          pause();
+          var ok = await confirmModal('Bu hikaye silinsin mi?', 'Sil', true);
+          if (!ok) { play(); return; }
+          var r = await sb.from('stories').delete().eq('id', cur.id);
+          if (r.error) { toast(friendlyError(r.error), true); play(); return; }
+          removeFile(cur.media_path);
+          g.stories.splice(si, 1);
+          toast('Hikaye silindi.');
+          if (!g.stories.length) { groups.splice(gi, 1); if (!groups.length) { close(); return; } if (gi >= groups.length) gi = groups.length - 1; g = groups[gi]; si = 0; }
+          else if (si >= g.stories.length) si = g.stories.length - 1;
+          show();
+        } }, icon('trash')) : null,
+        h('button', { type: 'button', 'aria-label': 'Kapat', onclick: close }, icon('x')));
+      var frame = h('div', { class: 'frame' });
+      vid = null;
+      if (cur.media_type === 'video') {
+        vid = h('video', { src: mediaUrl(cur.media_path), playsinline: true, preload: 'auto' });
+        frame.append(vid);
+      } else {
+        frame.append(h('img', { src: mediaUrl(cur.media_path), alt: 'Hikaye' }));
+      }
+      var zl = h('button', { class: 'zone l', type: 'button', 'aria-label': 'Önceki', onclick: prev });
+      var zr = h('button', { class: 'zone r', type: 'button', 'aria-label': 'Sonraki', onclick: next });
+      [zl, zr].forEach(function (z) {
+        var down = 0;
+        z.addEventListener('pointerdown', function () { down = Date.now(); pause(); });
+        z.addEventListener('pointerup', function (ev) { if (Date.now() - down > 220) { ev.preventDefault(); z._skip = true; } play(); });
+        z.addEventListener('pointercancel', function () { play(); });
+        z.addEventListener('click', function (ev) { if (z._skip) { z._skip = false; ev.stopImmediatePropagation(); } }, true);
+      });
+      frame.append(bars, head, zl, zr);
+      root.replaceChildren(frame);
+      if (vid) vid.addEventListener('loadeddata', play, { once: true });
+      else play();
+    }
+    show();
+  }
+
+  /* ================= sayfalar ================= */
+  function skeletons(n) {
+    var a = [];
+    for (var i = 0; i < n; i++) a.push(h('div', { class: 'sk sk-card' }));
+    return a;
+  }
+  function emptyState(title, text, btn) {
+    return h('div', { class: 'empty' }, h('h2', null, title), text ? h('p', null, text) : null, btn || null);
+  }
+
+  async function feedPage(tok) {
+    var tab = 'all';
+    try { tab = sessionStorage.getItem('kare_tab') === 'follow' && state.me ? 'follow' : 'all'; } catch (e) {}
+    var storiesHost = h('div');
+    var list = h('div', { class: 'feed' });
+    var moreWrap = h('div', { class: 'loadmore', hidden: true });
+    var tabAll = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { setTab('all'); } }, 'Keşfet');
+    var tabFollow = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { if (!requireLogin()) return; setTab('follow'); } }, 'Takip');
+    var tabs = h('div', { class: 'tabs', role: 'tablist' }, tabAll, tabFollow);
+    var wrap = h('div', { class: 'page-in' }, storiesHost, tabs, list, moreWrap);
+    $('#view').replaceChildren(wrap);
+    var cursor = null, seenKeys = new Set(), loading = false, version = 0;
+
+    function paintTabs() {
+      tabAll.setAttribute('aria-selected', tab === 'all' ? 'true' : 'false');
+      tabFollow.setAttribute('aria-selected', tab === 'follow' ? 'true' : 'false');
+    }
+    async function load(reset) {
+      if (loading) return;
+      loading = true;
+      var my = ++version;
+      if (reset) { list.replaceChildren.apply(list, skeletons(2)); seenKeys = new Set(); cursor = null; moreWrap.hidden = true; }
+      try {
+        var r = await fetchFeed(tab, reset ? null : cursor);
+        if (tok !== routeTok || my !== version) { loading = false; return; }
+        if (reset) list.replaceChildren();
+        var added = 0;
+        r.items.forEach(function (it, i) {
+          if (seenKeys.has(it.key)) return;
+          seenKeys.add(it.key);
+          list.append(postCard(it, { enter: true, i: added++ }));
+        });
+        cursor = r.cursor;
+        moreWrap.hidden = !cursor;
+        if (!list.children.length) {
+          list.replaceChildren(tab === 'follow'
+            ? emptyState('Takip ettiklerin burada görünür', 'Henüz takip ettiğin kimse paylaşım yapmadı. Keşfet sekmesinden insanları bul.', h('button', { class: 'btn', type: 'button', onclick: function () { setTab('all'); } }, 'Keşfet\'e git'))
+            : emptyState('İlk kare senden gelsin', 'Henüz kimse bir şey paylaşmadı.', h('button', { class: 'btn', type: 'button', onclick: function () { if (requireLogin()) uploadModal('post'); } }, 'Paylaş')));
+        }
+      } catch (e) {
+        if (tok === routeTok) list.replaceChildren(emptyState('Akış yüklenemedi', friendlyError(e), h('button', { class: 'btn', type: 'button', onclick: function () { load(true); } }, 'Tekrar dene')));
+      }
+      loading = false;
+    }
+    function setTab(t) {
+      tab = t; try { sessionStorage.setItem('kare_tab', t); } catch (e) {}
+      paintTabs(); load(true);
+    }
+    moreWrap.append(h('button', { class: 'btn quiet', type: 'button', onclick: function () { load(false); } }, 'Daha fazla göster'));
+    paintTabs();
+    renderStoriesBar(storiesHost, tok);
+    load(true);
+  }
+
+  async function postPage(id, tok) {
+    var view = $('#view');
+    view.replaceChildren(h('div', { class: 'sk sk-card' }));
+    var r = await sb.from('posts').select(POST_SEL).eq('id', id).maybeSingle();
+    if (tok !== routeTok) return;
+    if (r.error || !r.data) { view.replaceChildren(emptyState('Paylaşım bulunamadı', 'Silinmiş ya da bağlantı hatalı olabilir.', h('a', { class: 'btn', href: '#/' }, 'Ana sayfa'))); return; }
+    var item = { post: r.data, mine: {} };
+    await attachMine([item]);
+    if (tok !== routeTok) return;
+    var card = postCard(item, { detail: true });
+    var cl = h('div', { class: 'comments' });
+    var wrap = h('div', { class: 'page-in' },
+      h('button', { class: 'back', type: 'button', onclick: function () { if (history.length > 1) history.back(); else location.hash = '#/'; } }, icon('back'), 'Geri'),
+      card, cl);
+    view.replaceChildren(wrap);
+
+    var postOwner = r.data.user_id;
+    function commentRow(c, enter) {
+      var row = h('div', { class: 'comment' + (enter ? ' enter' : '') },
+        h('a', { href: '#/u/' + encodeURIComponent(c.author.username) }, avatarEl(c.author, 34)),
+        h('div', { class: 'txt' }, h('b', null, c.author.username), c.body, h('span', { class: 'mono' }, timeAgo(c.created_at))));
+      if (state.me && (state.me.id === c.user_id || state.me.id === postOwner)) {
+        row.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Yorumu sil', style: { width: '34px', height: '34px' }, onclick: async function () {
+          var d = await sb.from('comments').delete().eq('id', c.id);
+          if (d.error) { toast(friendlyError(d.error), true); return; }
+          row.remove(); card.bumpComments(-1);
+        } }, icon('trash')));
+      }
+      return row;
+    }
+    var cr = await sb.from('comments').select('id,body,created_at,user_id,author:profiles!comments_user_id_fkey(' + PROFILE_SEL + ')').eq('post_id', id).order('created_at', { ascending: true }).limit(300);
+    if (tok !== routeTok) return;
+    var listEl = h('div', { class: 'comments', style: { marginTop: '0' } });
+    (cr.data || []).forEach(function (c) { listEl.append(commentRow(c, false)); });
+    var input = h('input', { class: 'input', id: 'c-in', type: 'text', maxlength: '500', placeholder: 'Yorum yaz', autocomplete: 'off', 'aria-label': 'Yorum yaz' });
+    var send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Gönder' }, icon('send'));
+    var form = h('form', { class: 'cform' }, input, send);
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      if (!requireLogin()) return;
+      var body = input.value.trim();
+      if (!body) return;
+      send.disabled = true;
+      var ins = await sb.from('comments').insert({ post_id: id, user_id: state.me.id, body: body }).select('id,body,created_at,user_id,author:profiles!comments_user_id_fkey(' + PROFILE_SEL + ')').single();
+      send.disabled = false;
+      if (ins.error) { toast(friendlyError(ins.error), true); return; }
+      input.value = '';
+      listEl.append(commentRow(ins.data, true));
+      card.bumpComments(1);
+    });
+    cl.append(h('h2', { style: { fontSize: '20px' } }, 'Yorumlar'), form, listEl);
+    if (!cr.data || !cr.data.length) listEl.append(h('p', { class: 'hint', style: { margin: 0 } }, 'İlk yorumu sen yaz.'));
+  }
+
+  function gridTile(post, i) {
+    var t = h('a', { class: 'tile enter', href: '#/p/' + post.id, style: { '--i': String(Math.min(i, 14)) }, 'aria-label': 'Paylaşımı aç' });
+    if (post.media_type === 'video') {
+      var v = h('video', { src: mediaUrl(post.media_path) + '#t=0.1', preload: 'metadata', playsinline: true });
+      v.muted = true;
+      t.append(v, h('span', { class: 'badge' }, icon('play')));
+    } else t.append(h('img', { src: mediaUrl(post.media_path), alt: '', loading: 'lazy', decoding: 'async' }));
+    t.append(h('span', { class: 'over' }, h('span', null, icon('heart'), fmt(cnt(post.likes))), h('span', null, icon('comment'), fmt(cnt(post.comments)))));
+    return t;
+  }
+
+  async function profilePage(username, tok) {
+    var view = $('#view');
+    view.replaceChildren(h('div', { class: 'sk sk-card', style: { height: '220px' } }));
+    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path,created_at').eq('username', username.toLowerCase()).maybeSingle();
+    if (tok !== routeTok) return;
+    if (r.error || !r.data) { view.replaceChildren(emptyState('Kullanıcı bulunamadı', '@' + username + ' adında biri yok.', h('a', { class: 'btn', href: '#/' }, 'Ana sayfa'))); return; }
+    var pr = r.data;
+    var isMe = state.me && state.me.id === pr.id;
+    var counts = await Promise.all([
+      sb.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', pr.id),
+      sb.from('follows').select('follower_id', { count: 'exact', head: true }).eq('following_id', pr.id),
+      sb.from('follows').select('following_id', { count: 'exact', head: true }).eq('follower_id', pr.id)
+    ]);
+    if (tok !== routeTok) return;
+    var nPosts = counts[0].count || 0, nFollowers = counts[1].count || 0, nFollowing = counts[2].count || 0;
+    var followersEl = h('b', null, fmt(nFollowers));
+    var action;
+    if (isMe) {
+      action = h('a', { class: 'btn quiet small', href: '#/ayarlar' }, 'Profili düzenle');
+    } else {
+      var f = state.following.has(pr.id);
+      action = h('button', { class: f ? 'btn quiet small' : 'btn small', type: 'button' }, f ? 'Takiptesin' : 'Takip et');
+      action.addEventListener('click', async function () {
+        if (!requireLogin()) return;
+        action.disabled = true;
+        var now = state.following.has(pr.id);
+        var q = now ? sb.from('follows').delete().match({ follower_id: state.me.id, following_id: pr.id }) : sb.from('follows').insert({ follower_id: state.me.id, following_id: pr.id });
+        var res = await q;
+        action.disabled = false;
+        if (res.error && res.error.code !== '23505') { toast(friendlyError(res.error), true); return; }
+        if (now) { state.following.delete(pr.id); nFollowers--; } else { state.following.add(pr.id); nFollowers++; }
+        followersEl.textContent = fmt(nFollowers);
+        action.className = state.following.has(pr.id) ? 'btn quiet small' : 'btn small';
+        action.textContent = state.following.has(pr.id) ? 'Takiptesin' : 'Takip et';
+      });
+    }
+    var head = h('div', { class: 'phead' },
+      avatarEl(pr, 96),
+      h('div', { class: 'info' },
+        h('div', null, h('h1', null, nameOf(pr)), h('span', { class: 'mono' }, '@' + pr.username)),
+        h('div', { class: 'stats' },
+          h('div', null, h('b', null, fmt(nPosts)), h('span', { class: 'mono' }, 'Kare')),
+          h('div', null, followersEl, h('span', { class: 'mono' }, 'Takipçi')),
+          h('div', null, h('b', null, fmt(nFollowing)), h('span', { class: 'mono' }, 'Takip'))),
+        pr.bio ? h('p', { class: 'bio' }, pr.bio) : null,
+        h('div', null, action)));
+    var gridHost = h('div');
+    var tabPosts = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { showTab('posts'); } }, 'Paylaşımlar');
+    var tabReposts = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { showTab('reposts'); } }, 'Repostlar');
+    var tabs = h('div', { class: 'tabs', role: 'tablist' }, tabPosts, tabReposts);
+    var wrap = h('div', { class: 'page-in' }, head, tabs, gridHost);
+    view.replaceChildren(wrap);
+    async function showTab(t) {
+      tabPosts.setAttribute('aria-selected', t === 'posts' ? 'true' : 'false');
+      tabReposts.setAttribute('aria-selected', t === 'reposts' ? 'true' : 'false');
+      gridHost.replaceChildren(h('div', { class: 'sk', style: { height: '200px' } }));
+      var posts = [];
+      if (t === 'posts') {
+        var pq = await sb.from('posts').select(GRID_SEL).eq('user_id', pr.id).order('created_at', { ascending: false }).limit(60);
+        if (pq.error) { if (tok === routeTok) gridHost.replaceChildren(emptyState('Yüklenemedi', friendlyError(pq.error))); return; }
+        posts = pq.data;
+      } else {
+        var rq = await sb.from('reposts').select('created_at,post:posts!reposts_post_id_fkey(' + GRID_SEL + ')').eq('user_id', pr.id).order('created_at', { ascending: false }).limit(60);
+        if (rq.error) { if (tok === routeTok) gridHost.replaceChildren(emptyState('Yüklenemedi', friendlyError(rq.error))); return; }
+        posts = rq.data.map(function (x) { return x.post; }).filter(Boolean);
+      }
+      if (tok !== routeTok) return;
+      if (!posts.length) {
+        gridHost.replaceChildren(emptyState(t === 'posts' ? 'Henüz paylaşım yok' : 'Henüz repost yok', isMe && t === 'posts' ? 'İlk karını paylaşmak için + düğmesine bas.' : null));
+        return;
+      }
+      var grid = h('div', { class: 'grid' });
+      posts.forEach(function (p, i) { grid.append(gridTile(p, i)); });
+      gridHost.replaceChildren(grid);
+    }
+    showTab('posts');
+  }
+
+  async function favoritesPage(tok) {
+    var view = $('#view');
+    if (!state.me) {
+      view.replaceChildren(emptyState('Favorilerini görmek için giriş yap', 'Beğendiğin paylaşımları kaydet, burada hep yanında olsun.', h('button', { class: 'btn', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap')));
+      return;
+    }
+    view.replaceChildren(h('div', { class: 'sk', style: { height: '240px' } }));
+    var r = await sb.from('favorites').select('created_at,post:posts!favorites_post_id_fkey(' + GRID_SEL + ')').eq('user_id', state.me.id).order('created_at', { ascending: false }).limit(90);
+    if (tok !== routeTok) return;
+    var posts = (r.data || []).map(function (x) { return x.post; }).filter(Boolean);
+    var wrap = h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Favoriler'));
+    if (!posts.length) wrap.append(emptyState('Henüz favorin yok', 'Bir paylaşımdaki yer imi simgesine bas, burada görünsün.'));
+    else { var grid = h('div', { class: 'grid' }); posts.forEach(function (p, i) { grid.append(gridTile(p, i)); }); wrap.append(grid); }
+    view.replaceChildren(wrap);
+  }
+
+  async function settingsPage(tok) {
+    var view = $('#view');
+    if (!state.me) { view.replaceChildren(emptyState('Ayarlar için giriş yap', null, h('button', { class: 'btn', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'))); return; }
+    var me = state.me;
+    var newAvatar = null, previewUrl = null;
+    var avHost = h('div', null, avatarEl(me, 96));
+    var file = h('input', { class: 'sr', id: 's-av', type: 'file', accept: 'image/*' });
+    file.addEventListener('change', async function () {
+      var f = file.files[0]; if (!f) return;
+      try {
+        newAvatar = await prepareMedia(f, { max: 320, square: true, imageOnly: true });
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(newAvatar.blob);
+        avHost.replaceChildren(h('span', { class: 'av', style: { '--s': '96px' } }, h('img', { src: previewUrl, alt: '' })));
+      } catch (e) { toast(friendlyError(e), true); }
+    });
+    var dn = h('input', { class: 'input', id: 's-dn', type: 'text', maxlength: '40', value: me.display_name || '' });
+    var bio = h('textarea', { class: 'textarea', id: 's-bio', maxlength: '160' });
+    bio.value = me.bio || '';
+    var err = h('div', { class: 'hint bad', role: 'alert' });
+    var save = h('button', { class: 'btn', type: 'submit' }, 'Kaydet');
+    var form = h('form', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '16px' } }, avHost, h('label', { class: 'btn quiet small', for: 's-av' }, 'Fotoğrafı değiştir')),
+      file,
+      h('div', { class: 'field' }, h('label', { for: 's-dn' }, 'Görünen ad'), dn),
+      h('div', { class: 'field' }, h('label', { for: 's-bio' }, 'Hakkında'), bio, h('span', { class: 'hint' }, 'En fazla 160 karakter.')),
+      err,
+      h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } }, save, h('a', { class: 'btn quiet', href: '#/u/' + encodeURIComponent(me.username) }, 'Profilime dön')));
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault(); err.textContent = ''; save.disabled = true;
+      try {
+        var patch = { display_name: dn.value.trim() || null, bio: bio.value.trim() || null };
+        var oldPath = me.avatar_path;
+        if (newAvatar) patch.avatar_path = await uploadPrepared(newAvatar, 'avatar-');
+        var r = await sb.from('profiles').update(patch).eq('id', me.id).select('id,username,display_name,bio,avatar_path').single();
+        if (r.error) { if (newAvatar && patch.avatar_path) removeFile(patch.avatar_path); throw r.error; }
+        if (newAvatar && oldPath && oldPath !== patch.avatar_path) removeFile(oldPath);
+        state.me = r.data; newAvatar = null;
+        renderHeader();
+        toast('Profilin güncellendi.');
+      } catch (e) { err.textContent = friendlyError(e); }
+      save.disabled = false;
+    });
+    var out = h('button', { class: 'btn danger', type: 'button', onclick: async function () { await sb.auth.signOut(); toast('Çıkış yapıldı.'); location.hash = '#/'; } }, icon('logout'), 'Çıkış yap');
+    if (tok !== routeTok) return;
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Profil ayarları'), form, h('div', { style: { marginTop: '34px', paddingTop: '20px', borderTop: '1px solid var(--line)' } }, out)));
+  }
+
+  /* ================= yönlendirme ================= */
+  async function route() {
+    var tok = ++routeTok;
+    var parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
+    var view = $('#view');
+    view.classList.toggle('wide', parts[0] === 'u' || parts[0] === 'favoriler');
+    renderHeader();
+    try {
+      if (!parts.length) await feedPage(tok);
+      else if (parts[0] === 'u' && parts[1]) await profilePage(parts[1], tok);
+      else if (parts[0] === 'p' && parts[1]) await postPage(parts[1], tok);
+      else if (parts[0] === 'favoriler') await favoritesPage(tok);
+      else if (parts[0] === 'ayarlar') await settingsPage(tok);
+      else await feedPage(tok);
+    } catch (e) {
+      if (tok === routeTok) view.replaceChildren(emptyState('Bir sorun oluştu', friendlyError(e), h('button', { class: 'btn', type: 'button', onclick: route }, 'Tekrar dene')));
+    }
+  }
+  var lastHash = null;
+  window.addEventListener('hashchange', function () {
+    if (location.hash !== lastHash) window.scrollTo(0, 0);
+    lastHash = location.hash;
+    route();
+  });
+
+  /* ================= başlangıç ================= */
+  (async function init() {
+    renderHeader();
+    var r = await sb.auth.getSession();
+    state.session = r.data && r.data.session;
+    lastUid = state.session ? state.session.user.id : null;
+    await loadMe();
+    renderHeader();
+    lastHash = location.hash;
+    route();
+  })();
+})();
