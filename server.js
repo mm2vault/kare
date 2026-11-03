@@ -2,6 +2,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, 'public');
 const PORT = process.env.PORT || 10000;
@@ -14,6 +15,7 @@ const TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8'
 };
 
@@ -31,11 +33,19 @@ http.createServer((req, res) => {
       });
     }
     const ext = path.extname(file).toLowerCase();
-    res.writeHead(200, {
+    const noCache = ext === '.html' || path.basename(file) === 'sw.js';
+    const headers = {
       'Content-Type': TYPES[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+      'Cache-Control': noCache ? 'no-cache' : 'public, max-age=3600',
       'X-Content-Type-Options': 'nosniff'
-    });
+    };
+    const textual = ['.html', '.css', '.js', '.json', '.svg', '.webmanifest'].includes(ext);
+    if (textual && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+      headers['Content-Encoding'] = 'gzip'; headers['Vary'] = 'Accept-Encoding';
+      res.writeHead(200, headers);
+      return res.end(zlib.gzipSync(data));
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 }).listen(PORT, () => console.log('Kare ' + PORT + ' portunda çalışıyor'));

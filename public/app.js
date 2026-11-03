@@ -10,6 +10,19 @@
   var state = { session: null, me: null, following: new Set() };
   var routeTok = 0;
   var lastUid = undefined;
+  var feedIO = null, chPosts = null, chUser = null;
+  var badges = { notif: 0, msg: 0 };
+  function badgeEl(key) {
+    return h('span', { class: 'dot', 'data-b': key, hidden: !badges[key] }, badges[key] > 99 ? '99+' : String(badges[key] || ''));
+  }
+  function setBadge(key, n) {
+    badges[key] = Math.max(0, n);
+    document.querySelectorAll('[data-b="' + key + '"]').forEach(function (el) {
+      el.textContent = badges[key] > 99 ? '99+' : String(badges[key]);
+      el.hidden = !badges[key];
+    });
+  }
+  function bumpBadge(key, d) { setBadge(key, badges[key] + d); }
 
   /* ================= küçük yardımcılar ================= */
   function $(s, r) { return (r || document).querySelector(s); }
@@ -59,7 +72,11 @@
     send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>',
     image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
-    link: '<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>'
+    link: '<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    download: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>'
   };
   function icon(name, cls) {
     var w = document.createElement('span');
@@ -170,7 +187,7 @@
     lastUid = uid;
     // onAuthStateChange içinde doğrudan Supabase çağrısı yapmamak için erteliyoruz
     setTimeout(function () {
-      loadMe().then(function () { renderHeader(); route(); });
+      loadMe().then(function () { renderHeader(); route(); afterAuth(); });
     }, 0);
   });
 
@@ -282,17 +299,41 @@
       renderHeader();
     } }, icon(effectiveTheme() === 'dark' ? 'sun' : 'moon'));
     var nav = h('nav', { class: 'nav', 'aria-label': 'Ana menü' });
+    var bottom = $('#bottom');
+    bottom.replaceChildren();
+    function lnk(ico, href, label, active, key, cls) {
+      var a = h('a', { class: 'icon-btn' + (active ? ' active' : '') + (cls ? ' ' + cls : ''), href: href, 'aria-label': label }, icon(ico));
+      if (key) a.append(badgeEl(key));
+      return a;
+    }
+    function addBtn(cls) {
+      return h('button', { class: 'icon-btn add' + (cls ? ' ' + cls : ''), type: 'button', 'aria-label': 'Paylaş', onclick: function () { uploadModal('post'); } }, icon('plus'));
+    }
     if (state.me) {
+      var mine = state.me;
       nav.append(
-        h('a', { class: 'icon-btn' + (sec === 'home' ? ' active' : ''), href: '#/', 'aria-label': 'Ana sayfa' }, icon('home')),
-        h('a', { class: 'icon-btn' + (sec === 'favoriler' ? ' active' : ''), href: '#/favoriler', 'aria-label': 'Favoriler' }, icon('bookmark')),
-        h('button', { class: 'icon-btn add', type: 'button', 'aria-label': 'Paylaş', onclick: function () { uploadModal('post'); } }, icon('plus')),
+        lnk('home', '#/', 'Ana sayfa', sec === 'home', null, 'only-desktop'),
+        lnk('search', '#/ara', 'Ara', sec === 'ara', null, 'only-desktop'),
+        addBtn('only-desktop'),
+        lnk('bell', '#/bildirimler', 'Bildirimler', sec === 'bildirimler', 'notif', 'only-desktop'),
+        lnk('bookmark', '#/favoriler', 'Favoriler', sec === 'favoriler'),
+        lnk('mail', '#/mesajlar', 'Mesajlar', sec === 'mesajlar', 'msg'),
         themeBtn,
-        h('a', { class: 'icon-btn', href: '#/u/' + encodeURIComponent(state.me.username), 'aria-label': 'Profilim' }, avatarEl(state.me, 30))
+        h('a', { class: 'icon-btn only-desktop', href: '#/u/' + encodeURIComponent(mine.username), 'aria-label': 'Profilim' }, avatarEl(mine, 30))
       );
+      bottom.append(
+        lnk('home', '#/', 'Ana sayfa', sec === 'home'),
+        lnk('search', '#/ara', 'Ara', sec === 'ara'),
+        addBtn(),
+        lnk('bell', '#/bildirimler', 'Bildirimler', sec === 'bildirimler', 'notif'),
+        h('a', { class: 'icon-btn' + (sec === 'u' ? ' active' : ''), href: '#/u/' + encodeURIComponent(mine.username), 'aria-label': 'Profilim' }, avatarEl(mine, 28))
+      );
+      bottom.hidden = false;
     } else {
-      nav.append(themeBtn, h('button', { class: 'btn small', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'),
+      nav.append(lnk('search', '#/ara', 'Ara', sec === 'ara'), themeBtn,
+        h('button', { class: 'btn small', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'),
         h('button', { class: 'btn quiet small', type: 'button', onclick: function () { authModal('up'); } }, 'Kayıt ol'));
+      bottom.hidden = true;
     }
     $('#top').replaceChildren(
       h('a', { class: 'logo', href: '#/', 'aria-label': 'Kare ana sayfa' }, h('span', { class: 'film', 'aria-hidden': 'true' }), 'kare'),
@@ -603,7 +644,7 @@
     paint();
 
     var body = h('div', { class: 'card-body' });
-    if (p.caption) body.append(h('p', { class: 'caption' }, h('b', null, author.username || ''), p.caption));
+    if (p.caption) body.append(h('p', { class: 'caption' }, h('b', null, author.username || ''), rich(p.caption)));
     if (!opts.detail && st.comments > 0) body.append(h('a', { class: 'more-link', href: '#/p/' + p.id }, st.comments === 1 ? '1 yorumu gör' : st.comments + ' yorumun tümünü gör'));
     if (body.childNodes.length) card.append(body);
     card.bumpComments = function (d) { st.comments += d; paint(); };
@@ -816,9 +857,19 @@
     var tabAll = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { setTab('all'); } }, 'Keşfet');
     var tabFollow = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { if (!requireLogin()) return; setTab('follow'); } }, 'Takip');
     var tabs = h('div', { class: 'tabs', role: 'tablist' }, tabAll, tabFollow);
-    var wrap = h('div', { class: 'page-in' }, storiesHost, tabs, list, moreWrap);
+    var pendingNew = 0;
+    var banner = h('button', { class: 'newposts', type: 'button', hidden: true, onclick: function () {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      load(true);
+    } });
+    var wrap = h('div', { class: 'page-in' }, storiesHost, tabs, banner, list, moreWrap);
     $('#view').replaceChildren(wrap);
     var cursor = null, seenKeys = new Set(), loading = false, version = 0;
+    state.onNewPost = function () {
+      pendingNew++;
+      banner.textContent = pendingNew + (pendingNew === 1 ? ' yeni paylaşım' : ' yeni paylaşım var');
+      banner.hidden = false;
+    };
 
     function paintTabs() {
       tabAll.setAttribute('aria-selected', tab === 'all' ? 'true' : 'false');
@@ -828,7 +879,7 @@
       if (loading) return;
       loading = true;
       var my = ++version;
-      if (reset) { list.replaceChildren.apply(list, skeletons(2)); seenKeys = new Set(); cursor = null; moreWrap.hidden = true; }
+      if (reset) { list.replaceChildren.apply(list, skeletons(2)); seenKeys = new Set(); cursor = null; moreWrap.hidden = true; pendingNew = 0; banner.hidden = true; }
       try {
         var r = await fetchFeed(tab, reset ? null : cursor);
         if (tok !== routeTok || my !== version) { loading = false; return; }
@@ -856,6 +907,13 @@
       paintTabs(); load(true);
     }
     moreWrap.append(h('button', { class: 'btn quiet', type: 'button', onclick: function () { load(false); } }, 'Daha fazla göster'));
+    if ('IntersectionObserver' in window) {
+      if (feedIO) feedIO.disconnect();
+      feedIO = new IntersectionObserver(function (es) {
+        if (es[0].isIntersecting && cursor && !loading && !moreWrap.hidden) load(false);
+      }, { rootMargin: '700px 0px' });
+      feedIO.observe(moreWrap);
+    }
     paintTabs();
     renderStoriesBar(storiesHost, tok);
     load(true);
@@ -881,7 +939,7 @@
     function commentRow(c, enter) {
       var row = h('div', { class: 'comment' + (enter ? ' enter' : '') },
         h('a', { href: '#/u/' + encodeURIComponent(c.author.username) }, avatarEl(c.author, 34)),
-        h('div', { class: 'txt' }, h('b', null, c.author.username), c.body, h('span', { class: 'mono' }, timeAgo(c.created_at))));
+        h('div', { class: 'txt' }, h('b', null, c.author.username), rich(c.body), h('span', { class: 'mono' }, timeAgo(c.created_at))));
       if (state.me && (state.me.id === c.user_id || state.me.id === postOwner)) {
         row.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Yorumu sil', style: { width: '34px', height: '34px' }, onclick: async function () {
           var d = await sb.from('comments').delete().eq('id', c.id);
@@ -971,7 +1029,7 @@
           h('div', null, followersEl, h('span', { class: 'mono' }, 'Takipçi')),
           h('div', null, h('b', null, fmt(nFollowing)), h('span', { class: 'mono' }, 'Takip'))),
         pr.bio ? h('p', { class: 'bio' }, pr.bio) : null,
-        h('div', null, action)));
+        h('div', { class: 'prow' }, action, isMe ? null : h('a', { class: 'btn quiet small', href: '#/mesajlar/' + encodeURIComponent(pr.username) }, 'Mesaj'))));
     var gridHost = h('div');
     var tabPosts = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { showTab('posts'); } }, 'Paylaşımlar');
     var tabReposts = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { showTab('reposts'); } }, 'Repostlar');
@@ -1065,15 +1123,338 @@
     });
     var out = h('button', { class: 'btn danger', type: 'button', onclick: async function () { await sb.auth.signOut(); toast('Çıkış yapıldı.'); location.hash = '#/'; } }, icon('logout'), 'Çıkış yap');
     if (tok !== routeTok) return;
-    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Profil ayarları'), form, h('div', { style: { marginTop: '34px', paddingTop: '20px', borderTop: '1px solid var(--line)' } }, out)));
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Profil ayarları'), form, installBox(), h('div', { style: { marginTop: '34px', paddingTop: '20px', borderTop: '1px solid var(--line)' } }, out)));
   }
+
+  /* ---- uygulama gibi yükleme (PWA) ---- */
+  var deferredInstall = null;
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); deferredInstall = e; });
+  window.addEventListener('appinstalled', function () { deferredInstall = null; toast('Kare yüklendi'); });
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  }
+  function installBox() {
+    var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+    if (standalone) return h('span');
+    var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    var box = h('div', { class: 'install-box', style: { marginTop: '24px' } },
+      h('div', null, h('b', null, 'Telefona uygulama gibi ekle'), h('p', { class: 'hint', style: { margin: '2px 0 0' } },
+        ios ? 'Safari’de Paylaş düğmesine, sonra “Ana Ekrana Ekle”ye dokun.' : 'Ana ekrandan tek dokunuşla aç, tam ekran çalışır.')));
+    if (!ios) box.append(h('button', { class: 'btn small', type: 'button', onclick: async function () {
+      if (!deferredInstall) { toast('Tarayıcı menüsünden “Ana ekrana ekle”yi seç.'); return; }
+      deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch (e) {} deferredInstall = null;
+    } }, icon('download'), 'Yükle'));
+    return box;
+  }
+
+  /* ================= zengin metin, arama, bildirim, mesaj ================= */
+  function rich(text) {
+    var frag = document.createDocumentFragment();
+    var re = /(#[\p{L}\p{N}_]{2,40}|@[a-z0-9_]{3,24})/gu;
+    var last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      var tok = m[0];
+      frag.append(h('a', { class: 'tag', href: tok[0] === '#' ? '#/ara/' + encodeURIComponent(tok) : '#/u/' + encodeURIComponent(tok.slice(1)) }, tok));
+      last = m.index + tok.length;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    return frag;
+  }
+  function likeEsc(s) { return s.replace(/[\\%_]/g, '\\$&'); }
+
+  function followButton(pr) {
+    var b = h('button', { type: 'button' });
+    function paint() {
+      var f = state.following.has(pr.id);
+      b.className = f ? 'btn quiet small' : 'btn small';
+      b.textContent = f ? 'Takiptesin' : 'Takip et';
+    }
+    b.addEventListener('click', async function () {
+      if (!requireLogin()) return;
+      b.disabled = true;
+      var now = state.following.has(pr.id);
+      var res = await (now
+        ? sb.from('follows').delete().match({ follower_id: state.me.id, following_id: pr.id })
+        : sb.from('follows').insert({ follower_id: state.me.id, following_id: pr.id }));
+      b.disabled = false;
+      if (res.error && res.error.code !== '23505') { toast(friendlyError(res.error), true); return; }
+      if (now) state.following.delete(pr.id); else state.following.add(pr.id);
+      paint();
+    });
+    paint();
+    return b;
+  }
+  function userRow(pr, opts) {
+    opts = opts || {};
+    var row = h('div', { class: 'urow' },
+      h('a', { class: 'ulink', href: opts.href || '#/u/' + encodeURIComponent(pr.username) },
+        avatarEl(pr, 46),
+        h('span', { class: 'uname' }, h('b', null, nameOf(pr)), h('span', { class: 'mono' }, '@' + pr.username))));
+    if (!opts.noFollow && !(state.me && state.me.id === pr.id)) row.append(followButton(pr));
+    return row;
+  }
+  function sectionTitle(t) { return h('h2', { style: { fontSize: '20px', marginBottom: '10px' } }, t); }
+  function loginPrompt(title, text) {
+    return emptyState(title, text, h('button', { class: 'btn', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'));
+  }
+
+  async function searchUsers(term, limit) {
+    var esc = likeEsc(term.replace(/^@/, ''));
+    var res = await Promise.all([
+      sb.from('profiles').select(PROFILE_SEL).ilike('username', '%' + esc + '%').limit(limit),
+      sb.from('profiles').select(PROFILE_SEL).ilike('display_name', '%' + esc + '%').limit(limit)
+    ]);
+    var seen = {}, users = [];
+    (res[0].data || []).concat(res[1].data || []).forEach(function (u) { if (!seen[u.id]) { seen[u.id] = 1; users.push(u); } });
+    return users.slice(0, limit);
+  }
+
+  async function searchPage(q, tok) {
+    q = (q || '').trim();
+    var view = $('#view');
+    var input = h('input', { class: 'input', id: 'q', type: 'search', placeholder: 'Kişi, #etiket veya kelime ara', autocomplete: 'off', value: q, 'aria-label': 'Ara' });
+    var out = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '18px' } });
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '14px' } }, 'Ara'), input, out));
+
+    async function discover() {
+      var nodes = [];
+      var pr = await sb.from('profiles').select(PROFILE_SEL).order('created_at', { ascending: false }).limit(14);
+      var ps = (pr.data || []).filter(function (p) { return !(state.me && p.id === state.me.id) && !state.following.has(p.id); }).slice(0, 8);
+      var tg = await sb.from('posts').select('caption').not('caption', 'is', null).order('created_at', { ascending: false }).limit(150);
+      var counts = {};
+      (tg.data || []).forEach(function (r) {
+        (r.caption.match(/#[\p{L}\p{N}_]{2,40}/gu) || []).forEach(function (t) { var k = t.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+      });
+      var tags = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 10);
+      if (tags.length) {
+        nodes.push(h('section', null, sectionTitle('Gündemdeki etiketler'),
+          h('div', { class: 'chips' }, tags.map(function (t) { return h('a', { class: 'chip', href: '#/ara/' + encodeURIComponent(t) }, t, h('span', { class: 'mono' }, counts[t])); }))));
+      }
+      if (ps.length) {
+        nodes.push(h('section', null, sectionTitle('Önerilen kişiler'),
+          h('div', { class: 'ulist' }, ps.map(function (p) { return userRow(p); }))));
+      }
+      if (!nodes.length) nodes.push(emptyState('Henüz önerecek bir şey yok', 'Paylaşımlar geldikçe burada etiketler ve kişiler görünecek.'));
+      return nodes;
+    }
+    async function results(term) {
+      var nodes = [];
+      var isTag = term[0] === '#';
+      var esc = likeEsc(term);
+      var postsP = sb.from('posts').select(GRID_SEL).ilike('caption', '%' + esc + '%').order('created_at', { ascending: false }).limit(30);
+      var users = isTag ? [] : await searchUsers(term, 20);
+      var posts = await postsP;
+      if (users.length) nodes.push(h('section', null, sectionTitle('Kişiler'), h('div', { class: 'ulist' }, users.map(function (u) { return userRow(u); }))));
+      var pdata = posts.data || [];
+      if (pdata.length) {
+        var grid = h('div', { class: 'grid' });
+        pdata.forEach(function (p, i) { grid.append(gridTile(p, i)); });
+        nodes.push(h('section', null, sectionTitle(isTag ? term + ' · ' + pdata.length + ' paylaşım' : 'Paylaşımlar'), grid));
+      }
+      if (!nodes.length) nodes.push(emptyState('Sonuç bulunamadı', '"' + term + '" için kişi ya da paylaşım yok.'));
+      return nodes;
+    }
+    var seq = 0, timer = null;
+    async function run(term) {
+      var my = ++seq;
+      term = term.trim();
+      history.replaceState(null, '', '#/ara' + (term ? '/' + encodeURIComponent(term) : ''));
+      out.replaceChildren(h('div', { class: 'sk', style: { height: '140px' } }));
+      var nodes;
+      try { nodes = term ? await results(term) : await discover(); }
+      catch (e) { nodes = [emptyState('Arama yapılamadı', friendlyError(e))]; }
+      if (tok !== routeTok || my !== seq) return;
+      out.replaceChildren.apply(out, nodes);
+    }
+    input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { run(input.value); }, 300); });
+    run(q);
+    if (!q && window.matchMedia && matchMedia('(hover: hover)').matches) input.focus();
+  }
+
+  var NOTIF_TEXT = { like: 'gönderini beğendi', comment: 'gönderine yorum yaptı', repost: 'gönderini repost etti', follow: 'seni takip etmeye başladı' };
+  async function notificationsPage(tok) {
+    var view = $('#view');
+    if (!state.me) { view.replaceChildren(loginPrompt('Bildirimler için giriş yap', 'Beğeniler, yorumlar ve yeni takipçiler burada görünür.')); return; }
+    var list = h('div', { class: 'ulist' }, h('div', { class: 'sk', style: { height: '120px' } }));
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '14px' } }, 'Bildirimler'), list));
+    async function load() {
+      var r = await sb.from('notifications').select('id,type,post_id,created_at,read_at,actor:profiles!notifications_actor_id_fkey(' + PROFILE_SEL + '),post:posts!notifications_post_id_fkey(id,media_path,media_type)').eq('user_id', state.me.id).order('created_at', { ascending: false }).limit(60);
+      if (tok !== routeTok) return;
+      if (r.error) { list.replaceChildren(emptyState('Yüklenemedi', friendlyError(r.error))); return; }
+      if (!r.data.length) {
+        list.replaceChildren(emptyState('Henüz bildirim yok', 'Biri seni takip edince, gönderini beğenince ya da yorum yapınca burada görünür.'));
+        return;
+      }
+      var hadUnread = r.data.some(function (n) { return !n.read_at; });
+      list.replaceChildren.apply(list, r.data.filter(function (n) { return n.actor; }).map(function (n, i) {
+        var thumb = null;
+        if (n.post) {
+          thumb = n.post.media_type === 'image'
+            ? h('img', { class: 'nthumb', src: mediaUrl(n.post.media_path), alt: '', loading: 'lazy' })
+            : h('span', { class: 'nthumb vid' }, icon('play'));
+        }
+        return h('a', { class: 'nrow enter' + (n.read_at ? '' : ' unread'), style: { '--i': String(Math.min(i, 12)) }, href: n.post_id ? '#/p/' + n.post_id : '#/u/' + encodeURIComponent(n.actor.username) },
+          avatarEl(n.actor, 44),
+          h('span', { class: 'ntxt' }, h('span', null, h('b', null, n.actor.username), ' ' + (NOTIF_TEXT[n.type] || '')), h('span', { class: 'mono' }, timeAgo(n.created_at))),
+          thumb);
+      }));
+      if (hadUnread) {
+        await sb.from('notifications').update({ read_at: new Date().toISOString() }).eq('user_id', state.me.id).is('read_at', null);
+        setBadge('notif', 0);
+      }
+    }
+    state.onNotif = load;
+    load();
+  }
+
+  async function messagesPage(tok) {
+    var view = $('#view');
+    if (!state.me) { view.replaceChildren(loginPrompt('Mesajlar için giriş yap', 'Arkadaşlarınla özel olarak yaz.')); return; }
+    var list = h('div', { class: 'ulist' }, h('div', { class: 'sk', style: { height: '120px' } }));
+    var found = h('div', { class: 'ulist' });
+    var input = h('input', { class: 'input', id: 'nm', type: 'search', placeholder: 'Yeni mesaj için kişi ara', autocomplete: 'off', 'aria-label': 'Kişi ara' });
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '14px' } }, 'Mesajlar'), input, found, h('div', { style: { height: '14px' } }), list));
+    var timer = null, seq = 0;
+    input.addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(async function () {
+        var my = ++seq, t = input.value.trim();
+        if (!t) { found.replaceChildren(); return; }
+        var users = (await searchUsers(t, 8)).filter(function (u) { return u.id !== state.me.id; });
+        if (tok !== routeTok || my !== seq) return;
+        found.replaceChildren.apply(found, users.length
+          ? users.map(function (u) { return userRow(u, { href: '#/mesajlar/' + encodeURIComponent(u.username), noFollow: true }); })
+          : [h('p', { class: 'hint' }, 'Kimse bulunamadı.')]);
+      }, 300);
+    });
+    async function load() {
+      var c = await sb.rpc('my_conversations');
+      if (tok !== routeTok) return;
+      if (c.error) { list.replaceChildren(emptyState('Yüklenemedi', friendlyError(c.error))); return; }
+      var convs = (c.data || []).slice().sort(function (a, b) { return ms(b.last_at) - ms(a.last_at); });
+      setBadge('msg', convs.reduce(function (s, x) { return s + (x.unread || 0); }, 0));
+      if (!convs.length) { list.replaceChildren(emptyState('Henüz mesajın yok', 'Yukarıdan birini arayıp yazmaya başla.')); return; }
+      var ids = convs.map(function (x) { return x.partner_id; });
+      var pr = await sb.from('profiles').select(PROFILE_SEL).in('id', ids);
+      if (tok !== routeTok) return;
+      var profs = {};
+      (pr.data || []).forEach(function (p) { profs[p.id] = p; });
+      list.replaceChildren.apply(list, convs.filter(function (x) { return profs[x.partner_id]; }).map(function (x, i) {
+        var p = profs[x.partner_id];
+        return h('a', { class: 'urow convo enter', style: { '--i': String(Math.min(i, 12)) }, href: '#/mesajlar/' + encodeURIComponent(p.username) },
+          avatarEl(p, 48),
+          h('span', { class: 'uname', style: { flex: '1' } }, h('b', null, nameOf(p)), h('span', { class: 'cprev' }, (x.last_sender === state.me.id ? 'Sen: ' : '') + x.last_body)),
+          h('span', { class: 'cmeta' }, h('span', { class: 'mono' }, timeAgo(x.last_at)), x.unread ? h('span', { class: 'pill' }, String(x.unread)) : null));
+      }));
+    }
+    state.onConvUpdate = load;
+    load();
+  }
+
+  async function chatPage(username, tok) {
+    var view = $('#view');
+    if (!state.me) { view.replaceChildren(loginPrompt('Mesajlar için giriş yap', 'Arkadaşlarınla özel olarak yaz.')); return; }
+    var pr = await sb.from('profiles').select(PROFILE_SEL).eq('username', username.toLowerCase()).maybeSingle();
+    if (tok !== routeTok) return;
+    if (!pr.data) { view.replaceChildren(emptyState('Kullanıcı bulunamadı', null, h('a', { class: 'btn', href: '#/mesajlar' }, 'Mesajlara dön'))); return; }
+    var other = pr.data, me = state.me.id;
+    if (other.id === me) { location.hash = '#/mesajlar'; return; }
+    var box = h('div', { class: 'msgs', role: 'log', 'aria-live': 'polite' });
+    var input = h('input', { class: 'input', id: 'm-in', type: 'text', maxlength: '1000', placeholder: 'Mesaj yaz', autocomplete: 'off', 'aria-label': 'Mesaj yaz' });
+    var send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Gönder' }, icon('send'));
+    var form = h('form', { class: 'cform chatform' }, input, send);
+    var head = h('div', { class: 'chead' },
+      h('a', { class: 'icon-btn', href: '#/mesajlar', 'aria-label': 'Mesajlara dön' }, icon('back')),
+      h('a', { href: '#/u/' + encodeURIComponent(other.username) }, avatarEl(other, 40)),
+      h('div', { class: 'who' }, h('b', null, nameOf(other)), h('span', { class: 'mono' }, '@' + other.username)));
+    view.replaceChildren(h('div', { class: 'chat page-in' }, head, box, form));
+    function bubble(m) {
+      return h('div', { class: 'bub' + (m.sender_id === me ? ' mine' : '') }, h('span', null, m.body), h('span', { class: 'mono' }, timeAgo(m.created_at)));
+    }
+    function toBottom() { box.scrollTop = box.scrollHeight; }
+    function markRead() {
+      sb.from('messages').update({ read_at: new Date().toISOString() }).eq('recipient_id', me).eq('sender_id', other.id).is('read_at', null)
+        .then(function () { refreshCounts(); }, function () {});
+    }
+    var r = await sb.from('messages').select('id,sender_id,recipient_id,body,created_at')
+      .or('and(sender_id.eq.' + me + ',recipient_id.eq.' + other.id + '),and(sender_id.eq.' + other.id + ',recipient_id.eq.' + me + ')')
+      .order('created_at', { ascending: false }).limit(200);
+    if (tok !== routeTok) return;
+    var msgs = (r.data || []).slice().reverse();
+    if (!msgs.length) box.append(h('p', { class: 'hint', style: { textAlign: 'center', margin: 'auto' } }, 'Konuşmayı başlat. İlk mesajı sen yaz.'));
+    msgs.forEach(function (m) { box.append(bubble(m)); });
+    toBottom();
+    markRead();
+    state.chat = {
+      partnerId: other.id,
+      onMsg: function (m) {
+        var empty = box.querySelector('.hint'); if (empty) empty.remove();
+        box.append(bubble(m)); toBottom(); markRead();
+      }
+    };
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var body = input.value.trim();
+      if (!body) return;
+      send.disabled = true;
+      var ins = await sb.from('messages').insert({ sender_id: me, recipient_id: other.id, body: body }).select('id,sender_id,recipient_id,body,created_at').single();
+      send.disabled = false;
+      if (ins.error) { toast(friendlyError(ins.error), true); return; }
+      input.value = '';
+      var empty = box.querySelector('.hint'); if (empty) empty.remove();
+      box.append(bubble(ins.data)); toBottom(); input.focus();
+    });
+    if (window.matchMedia && matchMedia('(hover: hover)').matches) input.focus();
+  }
+
+  /* ---- sayaçlar ve canlı güncelleme ---- */
+  async function refreshCounts() {
+    if (!state.me) { setBadge('notif', 0); setBadge('msg', 0); return; }
+    var id = state.me.id;
+    var res = await Promise.all([
+      sb.from('notifications').select('id', { count: 'exact', head: true }).eq('user_id', id).is('read_at', null),
+      sb.from('messages').select('id', { count: 'exact', head: true }).eq('recipient_id', id).is('read_at', null)
+    ]);
+    setBadge('notif', res[0].count || 0);
+    setBadge('msg', res[1].count || 0);
+  }
+  function startRealtime() {
+    if (!chPosts) {
+      chPosts = sb.channel('posts-feed').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, function (pl) {
+        if (state.me && pl.new && pl.new.user_id === state.me.id) return;
+        if (state.onNewPost) state.onNewPost();
+      }).subscribe();
+    }
+    if (chUser) { sb.removeChannel(chUser); chUser = null; }
+    if (!state.me) return;
+    var id = state.me.id;
+    chUser = sb.channel('user-' + id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + id }, function () {
+        if (state.onNotif) { state.onNotif(); return; }
+        bumpBadge('notif', 1);
+        toast('Yeni bildirimin var');
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'recipient_id=eq.' + id }, function (pl) {
+        var m = pl.new;
+        if (state.chat && m && state.chat.partnerId === m.sender_id) { state.chat.onMsg(m); return; }
+        bumpBadge('msg', 1);
+        toast('Yeni mesajın var');
+        if (state.onConvUpdate) state.onConvUpdate();
+      })
+      .subscribe();
+  }
+  function afterAuth() { refreshCounts(); startRealtime(); }
 
   /* ================= yönlendirme ================= */
   async function route() {
     var tok = ++routeTok;
     var parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
     var view = $('#view');
-    view.classList.toggle('wide', parts[0] === 'u' || parts[0] === 'favoriler');
+    view.classList.toggle('wide', parts[0] === 'u' || parts[0] === 'favoriler' || parts[0] === 'ara');
+    document.body.classList.toggle('in-chat', parts[0] === 'mesajlar' && !!parts[1]);
+    if (feedIO) { feedIO.disconnect(); feedIO = null; }
+    state.onNewPost = null; state.onNotif = null; state.onConvUpdate = null; state.chat = null;
     renderHeader();
     try {
       if (!parts.length) await feedPage(tok);
@@ -1081,6 +1462,10 @@
       else if (parts[0] === 'p' && parts[1]) await postPage(parts[1], tok);
       else if (parts[0] === 'favoriler') await favoritesPage(tok);
       else if (parts[0] === 'ayarlar') await settingsPage(tok);
+      else if (parts[0] === 'ara') await searchPage(parts.slice(1).join('/'), tok);
+      else if (parts[0] === 'bildirimler') await notificationsPage(tok);
+      else if (parts[0] === 'mesajlar' && parts[1]) await chatPage(parts[1], tok);
+      else if (parts[0] === 'mesajlar') await messagesPage(tok);
       else await feedPage(tok);
     } catch (e) {
       if (tok === routeTok) view.replaceChildren(emptyState('Bir sorun oluştu', friendlyError(e), h('button', { class: 'btn', type: 'button', onclick: route }, 'Tekrar dene')));
@@ -1103,5 +1488,6 @@
     renderHeader();
     lastHash = location.hash;
     route();
+    afterAuth();
   })();
 })();
