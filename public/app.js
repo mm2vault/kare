@@ -1449,7 +1449,7 @@
     });
     var out = h('button', { class: 'btn danger', type: 'button', onclick: async function () { await sb.auth.signOut(); toast('Çıkış yapıldı.'); location.hash = '#/'; } }, icon('logout'), 'Çıkış yap');
     if (tok !== routeTok) return;
-    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Profil ayarları'), form, installBox(), state.me.is_admin ? h('a', { class: 'btn quiet', style: { marginTop: '14px' }, href: '#/yonetim' }, 'Yönetim paneli') : null, h('div', { style: { marginTop: '34px', paddingTop: '20px', borderTop: '1px solid var(--line)' } }, out)));
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Profil ayarları'), form, installBox(), pushBox(), state.me.is_admin ? h('a', { class: 'btn quiet', style: { marginTop: '14px' }, href: '#/yonetim' }, 'Yönetim paneli') : null, h('div', { style: { marginTop: '34px', paddingTop: '20px', borderTop: '1px solid var(--line)' } }, out)));
   }
 
   /* ---- uygulama gibi yükleme (PWA) ---- */
@@ -1458,6 +1458,52 @@
   window.addEventListener('appinstalled', function () { deferredInstall = null; toast('Kare yüklendi'); });
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  }
+  function b64ToBytes(b64) {
+    var pad = '='.repeat((4 - b64.length % 4) % 4);
+    var raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  async function enablePush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) throw new Error('Bu tarayıcı telefona bildirimi desteklemiyor.');
+    var perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Bildirim izni verilmedi. Tarayıcı ayarlarından açabilirsin.');
+    var reg = await navigator.serviceWorker.ready;
+    var kr = await fetch(CFG.supabaseUrl + '/functions/v1/push', { headers: { apikey: CFG.supabaseKey } });
+    var key = (await kr.json()).publicKey;
+    if (!key) throw new Error('Bildirim sunucusuna ulaşılamadı.');
+    var sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    var j = sub.toJSON();
+    var r = await sb.rpc('save_push_sub', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    if (r.error) throw r.error;
+  }
+  async function pushState() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    try { var reg = await navigator.serviceWorker.getRegistration(); var sub = reg && await reg.pushManager.getSubscription(); if (sub && Notification.permission === 'granted') return 'on'; } catch (e) {}
+    return 'off';
+  }
+  function pushBox() {
+    var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+    var hint = h('p', { class: 'hint', style: { margin: '2px 0 0' } }, 'Uygulama kapalıyken bile yeni mesaj ve bildirimler telefonuna gelir.');
+    var btn = h('button', { class: 'btn small', type: 'button', disabled: true }, icon('bell'), 'Aç');
+    var box = h('div', { class: 'install-box', style: { marginTop: '14px' } }, h('div', null, h('b', null, 'Telefona bildirim'), hint), btn);
+    pushState().then(function (st) {
+      if (st === 'on') { btn.textContent = 'Açık'; btn.disabled = true; hint.textContent = 'Bildirimler bu cihazda açık.'; }
+      else if (st === 'denied') { hint.textContent = 'Bildirim izni engellenmiş. Tarayıcı ayarlarından izin verip tekrar dene.'; }
+      else if (st === 'unsupported' || (ios && !standalone)) { hint.textContent = ios ? 'iPhone’da önce Safari’den “Ana Ekrana Ekle” yap, uygulamayı oradan açıp tekrar dene.' : 'Bu tarayıcı telefona bildirimi desteklemiyor.'; }
+      else btn.disabled = false;
+    });
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      try { await enablePush(); btn.replaceChildren(icon('bell'), 'Açık'); hint.textContent = 'Bildirimler bu cihazda açık.'; toast('Bildirimler açıldı.'); }
+      catch (e) { toast(friendlyError(e), true); btn.disabled = false; }
+    });
+    return box;
   }
   function installBox() {
     var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
