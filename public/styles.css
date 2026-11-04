@@ -470,3 +470,17 @@ body.in-chat #ann { display: none; }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .tile-col { position: absolute; left: 6px; bottom: 6px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; padding: 0; z-index: 2; }
 .tile-col .ico { width: 16px; height: 16px; }
+
+/* ===== v6: yorum beğeni/yanıt, gizlilik ===== */
+.thread { display: flex; flex-direction: column; gap: 10px; }
+.comment.reply { margin-left: 44px; }
+.cacts { display: inline-flex; gap: 14px; margin-left: 10px; align-items: center; }
+.clike, .creply { background: none; border: 0; padding: 0; color: var(--muted); font: 500 12px var(--font-mono); display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.clike .ico { width: 14px; height: 14px; }
+.clike.on { color: #E0245E; }
+.clike.on .ico svg { fill: currentColor; }
+.creply:hover, .clike:hover { color: var(--ink); }
+.replynote { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; background: var(--surface-2); border-radius: 8px; font-size: 13px; color: var(--muted); }
+.replynote .icon-btn { width: 30px; height: 30px; }
+.radio { display: flex; gap: 10px; align-items: flex-start; }
+.radio input { margin-top: 4px; }
