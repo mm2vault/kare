@@ -3,6 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, 'public');
 const PORT = process.env.PORT || 10000;
@@ -33,12 +34,15 @@ http.createServer((req, res) => {
       });
     }
     const ext = path.extname(file).toLowerCase();
-    const noCache = ext === '.html' || path.basename(file) === 'sw.js';
+    const noCache = ['.html', '.js', '.css', '.webmanifest'].includes(ext);
     const headers = {
       'Content-Type': TYPES[ext] || 'application/octet-stream',
-      'Cache-Control': noCache ? 'no-cache' : 'public, max-age=3600',
+      'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400',
       'X-Content-Type-Options': 'nosniff'
     };
+    const etag = '"' + crypto.createHash('md5').update(data).digest('hex') + '"';
+    headers['ETag'] = etag;
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); return res.end(); }
     const textual = ['.html', '.css', '.js', '.json', '.svg', '.webmanifest'].includes(ext);
     if (textual && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
       headers['Content-Encoding'] = 'gzip'; headers['Vary'] = 'Accept-Encoding';

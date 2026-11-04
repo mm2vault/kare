@@ -1,5 +1,5 @@
 /* Kare servis çalışanı: kabuğu önbelleğe alır, veri her zaman ağdan gelir. */
-var V = 'kare-v8';
+var V = 'kare-v9';
 var SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(V).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
@@ -15,7 +15,7 @@ self.addEventListener('fetch', function (e) {
   var u = new URL(r.url);
   if (u.origin !== location.origin) return; // Supabase, yazı tipleri, CDN: ağa bırak
   e.respondWith(
-    fetch(r).then(function (res) {
+    fetch(r, { cache: 'no-cache' }).then(function (res) {
       if (res.ok) { var cp = res.clone(); caches.open(V).then(function (c) { c.put(r, cp); }); }
       return res;
     }).catch(function () {
