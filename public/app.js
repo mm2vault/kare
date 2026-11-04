@@ -82,6 +82,10 @@
     mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
     users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c2 .7 3 2.3 3 5.2"/>',
     folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>',
+    shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     download: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>'
   };
@@ -343,8 +347,7 @@
     var sec = currentSection();
     var themeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Temayı değiştir', onclick: function () {
       var next = effectiveTheme() === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('kare_theme', next); } catch (e) {}
+      PREF.set('theme', next); applyPrefs();
       renderHeader();
     } }, icon(effectiveTheme() === 'dark' ? 'sun' : 'moon'));
     var nav = h('nav', { class: 'nav', 'aria-label': 'Ana menü' });
@@ -367,7 +370,8 @@
         lnk('bell', '#/bildirimler', 'Bildirimler', sec === 'bildirimler', 'notif', 'only-desktop'),
         lnk('bookmark', '#/favoriler', 'Favoriler', sec === 'favoriler'),
         lnk('mail', '#/mesajlar', 'Mesajlar', sec === 'mesajlar', 'msg'),
-        themeBtn,
+        lnk('settings', '#/ayarlar', 'Ayarlar', sec === 'ayarlar'),
+        h('span', { class: 'only-desktop' }, themeBtn),
         h('a', { class: 'icon-btn only-desktop', href: '#/u/' + encodeURIComponent(mine.username), 'aria-label': 'Profilim' }, avatarEl(mine, 30))
       );
       bottom.append(
@@ -1467,7 +1471,7 @@
     draw();
   }
 
-  async function settingsPage(tok) {
+  async function profileSettings(tok) {
     var view = $('#view');
     if (!state.me) { view.replaceChildren(emptyState('Ayarlar için giriş yap', null, h('button', { class: 'btn', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'))); return; }
     var me = state.me;
@@ -1502,8 +1506,6 @@
     var dn = h('input', { class: 'input', id: 's-dn', type: 'text', maxlength: '40', value: me.display_name || '' });
     var bio = h('textarea', { class: 'textarea', id: 's-bio', maxlength: '160' });
     bio.value = me.bio || '';
-    var priv = h('input', { type: 'checkbox', id: 's-priv' });
-    priv.checked = !!me.is_private;
     var err = h('div', { class: 'hint bad', role: 'alert' });
     var save = h('button', { class: 'btn', type: 'submit' }, 'Kaydet');
     var form = h('form', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
@@ -1513,13 +1515,12 @@
         h('div', { class: 'prow' }, h('label', { class: 'btn quiet small', for: 's-bn' }, 'Banner seç'), bnRemove), h('span', { class: 'hint' }, 'Geniş (3:1) bir fotoğraf en iyisi. Otomatik kırpılır.')),
       h('div', { class: 'field' }, h('label', { for: 's-dn' }, 'Görünen ad'), dn),
       h('div', { class: 'field' }, h('label', { for: 's-bio' }, 'Hakkında'), bio, h('span', { class: 'hint' }, 'En fazla 160 karakter.')),
-      h('label', { class: 'radio', for: 's-priv' }, priv, h('span', null, h('b', null, 'Gizli hesap'), h('span', { class: 'hint', style: { display: 'block' } }, 'Paylaşımlarını ve hikayelerini sadece onayladığın takipçiler görür.'))),
       err,
       h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } }, save, h('a', { class: 'btn quiet', href: '#/u/' + encodeURIComponent(me.username) }, 'Profilime dön')));
     form.addEventListener('submit', async function (ev) {
       ev.preventDefault(); err.textContent = ''; save.disabled = true;
       try {
-        var patch = { display_name: dn.value.trim() || null, bio: bio.value.trim() || null, is_private: priv.checked };
+        var patch = { display_name: dn.value.trim() || null, bio: bio.value.trim() || null };
         var oldPath = me.avatar_path, oldBanner = me.banner_path;
         if (newBanner) patch.banner_path = await uploadPrepared(newBanner, 'banner-');
         else if (removeBanner) patch.banner_path = null;
@@ -1534,9 +1535,8 @@
       } catch (e) { err.textContent = friendlyError(e); }
       save.disabled = false;
     });
-    var out = h('button', { class: 'btn danger', type: 'button', onclick: async function () { await sb.auth.signOut(); toast('Çıkış yapıldı.'); location.hash = '#/'; } }, icon('logout'), 'Çıkış yap');
     if (tok !== routeTok) return;
-    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, 'Profil ayarları'), form, installBox(), pushBox(), blockedBox(), state.me.is_admin ? h('a', { class: 'btn quiet', style: { marginTop: '14px' }, href: '#/yonetim' }, 'Yönetim paneli') : null, h('div', { style: { marginTop: '34px', paddingTop: '20px', borderTop: '1px solid var(--line)' } }, out)));
+    view.replaceChildren(secPage('Profil', [form]));
   }
 
   /* ---- uygulama gibi yükleme (PWA) ---- */
@@ -1546,6 +1546,230 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
   }
+  /* ================= ayarlar ================= */
+  var PREF = {
+    get: function (k, d) { try { var v = localStorage.getItem('kare_' + k); return v == null ? d : v; } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem('kare_' + k, v); } catch (e) {} },
+    del: function (k) { try { localStorage.removeItem('kare_' + k); } catch (e) {} }
+  };
+  var ACCENTS = {
+    cobalt: { n: 'Kobalt' },
+    pink: { n: 'Pembe', l: '#D6246E', d: '#FF7AA8' },
+    green: { n: 'Yeşil', l: '#118A5B', d: '#4ADE9A' },
+    orange: { n: 'Turuncu', l: '#D9570B', d: '#FF9A5C' },
+    purple: { n: 'Mor', l: '#7C3AED', d: '#B79CFF' },
+    teal: { n: 'Turkuaz', l: '#0E8FA6', d: '#4FD6EE' }
+  };
+  function applyPrefs() {
+    var root = document.documentElement;
+    var t = PREF.get('theme', '');
+    if (t === 'dark' || t === 'light') root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
+    var a = ACCENTS[PREF.get('accent', 'cobalt')];
+    var dark = effectiveTheme() === 'dark';
+    if (a && a.l) { root.style.setProperty('--accent', dark ? a.d : a.l); root.style.setProperty('--accent-ink', dark ? '#0E1113' : '#fff'); }
+    else { root.style.removeProperty('--accent'); root.style.removeProperty('--accent-ink'); }
+    root.style.setProperty('--fs', { sm: '14px', md: '15px', lg: '17px' }[PREF.get('fs', 'md')] || '15px');
+    root.setAttribute('data-motion', PREF.get('motion', 'on') === 'off' ? 'off' : 'on');
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', a && a.l ? a.l : '#2B44F0');
+  }
+  if (window.matchMedia) {
+    try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { applyPrefs(); renderHeader(); }); } catch (e) {}
+  }
+  function npref(k) { return PREF.get('np_' + k, '1') !== '0'; }
+
+  function setRow(label, desc, node) {
+    return h('div', { class: 'setrow' }, h('div', { class: 'setl' }, h('b', null, label), desc ? h('span', { class: 'hint' }, desc) : null), node);
+  }
+  function switchEl(checked, onChange, label) {
+    var inp = h('input', { type: 'checkbox', role: 'switch', 'aria-label': label });
+    inp.checked = !!checked;
+    inp.addEventListener('change', function () { onChange(inp.checked, inp); });
+    return h('label', { class: 'switch' }, inp, h('span', { class: 'sw-t', 'aria-hidden': 'true' }));
+  }
+  function segEl(opts, current, onPick) {
+    var wrap = h('div', { class: 'seg', role: 'group', style: { gridTemplateColumns: 'repeat(' + opts.length + ', 1fr)' } });
+    function paint(cur) { Array.prototype.forEach.call(wrap.children, function (b, i) { b.setAttribute('aria-pressed', opts[i][0] === cur ? 'true' : 'false'); }); }
+    opts.forEach(function (o) { wrap.append(h('button', { type: 'button', onclick: function () { paint(o[0]); onPick(o[0]); } }, o[1])); });
+    paint(current);
+    return wrap;
+  }
+  function secPage(title, nodes) {
+    return h('div', { class: 'page-in' },
+      h('a', { class: 'back', href: '#/ayarlar', style: { display: 'inline-flex', marginBottom: '10px' } }, icon('back'), 'Ayarlar'),
+      h('h1', { style: { fontSize: '30px', marginBottom: '16px' } }, title),
+      h('div', { class: 'setcard' }, nodes));
+  }
+  function textModal(title, label, type, ph, onOk, okLabel) {
+    var inp = h('input', { class: 'input', id: 'tm-in', type: type, placeholder: ph || '', autocomplete: type === 'password' ? 'new-password' : 'email' });
+    var err = h('div', { class: 'hint bad', role: 'alert' });
+    var ok = h('button', { class: 'btn', type: 'submit' }, okLabel || 'Kaydet');
+    var f = h('form', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } }, h('div', { class: 'field' }, h('label', { for: 'tm-in' }, label), inp), err,
+      h('div', { class: 'row' }, h('button', { class: 'btn quiet', type: 'button', onclick: function () { mm.close(); } }, 'Vazgeç'), ok));
+    var mm = modal(h('div', { style: { display: 'contents' } }, h('h2', null, title), f), title);
+    f.addEventListener('submit', async function (ev) {
+      ev.preventDefault(); err.textContent = ''; ok.disabled = true;
+      try { var msg = await onOk(inp.value.trim()); mm.close(); if (msg) toast(msg); }
+      catch (e) { err.textContent = friendlyError(e); ok.disabled = false; }
+    });
+  }
+
+  async function exportMyData() {
+    var me = state.me.id;
+    var q = await Promise.all([
+      sb.from('profiles').select('id,username,display_name,bio,created_at').eq('id', me).maybeSingle(),
+      sb.from('posts').select('id,caption,media_path,media_type,created_at').eq('user_id', me),
+      sb.from('comments').select('id,post_id,body,created_at').eq('user_id', me),
+      sb.from('follows').select('following_id,status,created_at').eq('follower_id', me),
+      sb.from('favorites').select('post_id,collection,created_at').eq('user_id', me),
+      sb.from('messages').select('sender_id,recipient_id,body,created_at').or('sender_id.eq.' + me + ',recipient_id.eq.' + me).order('created_at').limit(5000)
+    ]);
+    var out = { exported_at: new Date().toISOString(), email: state.session && state.session.user.email, profile: q[0].data, posts: q[1].data, comments: q[2].data, following: q[3].data, favorites: q[4].data, messages: q[5].data };
+    var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = h('a', { href: url, download: 'kare-verilerim.json' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function deleteAccountModal() {
+    var inp = h('input', { class: 'input', id: 'da-in', type: 'text', placeholder: 'SİL', autocomplete: 'off', 'aria-label': 'Onay için SİL yaz' });
+    var err = h('div', { class: 'hint bad', role: 'alert' });
+    var go = h('button', { class: 'btn danger', type: 'button', disabled: true }, 'Hesabı kalıcı sil');
+    var mm = modal(h('div', { style: { display: 'contents' } }, h('h2', null, 'Hesabı sil'),
+      h('p', { style: { margin: 0 } }, 'Profilin, tüm paylaşımların, hikayelerin, yorumların, mesajların ve yüklediğin dosyalar kalıcı olarak silinir. Bu geri alınamaz.'),
+      h('div', { class: 'field' }, h('label', { for: 'da-in' }, 'Onaylamak için SİL yaz'), inp), err,
+      h('div', { class: 'row' }, h('button', { class: 'btn quiet', type: 'button', onclick: function () { mm.close(); } }, 'Vazgeç'), go)), 'Hesabı sil');
+    inp.addEventListener('input', function () { go.disabled = inp.value.trim().toLocaleUpperCase('tr') !== 'SİL' && inp.value.trim().toUpperCase() !== 'SIL'; });
+    go.addEventListener('click', async function () {
+      go.disabled = true; err.textContent = '';
+      var r = await sb.functions.invoke('delete-account', { body: { confirm: 'SIL' } });
+      if (r.error || (r.data && r.data.error)) { err.textContent = (r.data && r.data.error) || friendlyError(r.error); go.disabled = false; return; }
+      mm.close();
+      try { await sb.auth.signOut(); } catch (e) {}
+      toast('Hesabın silindi. Görüşmek üzere.');
+      location.hash = '#/';
+    });
+  }
+
+  function settingsHome() {
+    var view = $('#view');
+    if (!state.me) { view.replaceChildren(emptyState('Ayarlar için giriş yap', null, h('button', { class: 'btn', type: 'button', onclick: function () { authModal('in'); } }, 'Giriş yap'))); return; }
+    var me = state.me;
+    var rows = [
+      ['user', 'Profil', 'Fotoğraf, banner, ad ve hakkında', 'profil'],
+      ['mail', 'Hesap', 'E-posta, şifre, oturumlar, hesabı sil', 'hesap'],
+      ['lock', 'Gizlilik ve güvenlik', 'Gizli hesap, çevrimiçi durumu, engellenenler', 'gizlilik'],
+      ['bell', 'Bildirimler', 'Telefona bildirim ve uygulama içi uyarılar', 'bildirim'],
+      ['palette', 'Görünüm', 'Tema, vurgu rengi, yazı boyutu, animasyonlar', 'gorunum'],
+      ['download', 'Uygulama ve veri', 'Telefona yükle, verilerini indir, önbellek', 'uygulama']
+    ];
+    var list = rows.map(function (r, i) {
+      return h('a', { class: 'setlink enter', style: { '--i': String(i) }, href: '#/ayarlar/' + r[3] }, h('span', { class: 'sico' }, icon(r[0])), h('span', { class: 'setl' }, h('b', null, r[1]), h('span', { class: 'hint' }, r[2])), icon('back', 'chev'));
+    });
+    if (me.is_admin) list.push(h('a', { class: 'setlink enter', style: { '--i': '6' }, href: '#/yonetim' }, h('span', { class: 'sico' }, icon('shield')), h('span', { class: 'setl' }, h('b', null, 'Yönetim paneli'), h('span', { class: 'hint' }, 'Şikayetler, duyurular, kişiler')), icon('back', 'chev')));
+    view.replaceChildren(h('div', { class: 'page-in' },
+      h('h1', { style: { fontSize: '30px', marginBottom: '14px' } }, 'Ayarlar'),
+      h('a', { class: 'setme', href: '#/u/' + encodeURIComponent(me.username) }, avatarEl(me, 56), h('span', { class: 'setl' }, h('b', null, nameOf(me)), h('span', { class: 'hint mono' }, '@' + me.username))),
+      h('div', { class: 'setlist' }, list),
+      h('div', { style: { marginTop: '26px' } }, h('button', { class: 'btn danger', type: 'button', onclick: async function () { await sb.auth.signOut(); toast('Çıkış yapıldı.'); location.hash = '#/'; } }, icon('logout'), 'Çıkış yap'))));
+  }
+
+  async function settingsSection(name, tok) {
+    var view = $('#view');
+    if (!state.me) { settingsHome(); return; }
+    var me = state.me;
+    if (name === 'profil') { await profileSettings(tok); return; }
+    if (name === 'hesap') {
+      var email = state.session && state.session.user.email;
+      view.replaceChildren(secPage('Hesap', [
+        setRow('E-posta', email || '—', h('button', { class: 'btn quiet small', type: 'button', onclick: function () {
+          textModal('E-postayı değiştir', 'Yeni e-posta', 'email', 'yeni@mail.com', async function (v) {
+            if (!/.+@.+\..+/.test(v)) throw new Error('Geçerli bir e-posta yaz.');
+            var r = await sb.auth.updateUser({ email: v });
+            if (r.error) throw r.error;
+            return 'Onay bağlantısı e-postana gönderildi.';
+          }, 'Değiştir');
+        } }, 'Değiştir')),
+        setRow('Şifre', 'En az 6 karakter', h('button', { class: 'btn quiet small', type: 'button', onclick: function () {
+          textModal('Şifreyi değiştir', 'Yeni şifre', 'password', 'En az 6 karakter', async function (v) {
+            if (v.length < 6) throw new Error('Şifre en az 6 karakter olmalı.');
+            var r = await sb.auth.updateUser({ password: v });
+            if (r.error) throw r.error;
+            return 'Şifren güncellendi.';
+          }, 'Güncelle');
+        } }, 'Değiştir')),
+        setRow('Diğer cihazlar', 'Bu cihaz dışındaki tüm oturumları kapatır', h('button', { class: 'btn quiet small', type: 'button', onclick: async function () {
+          var r = await sb.auth.signOut({ scope: 'others' });
+          toast(r.error ? friendlyError(r.error) : 'Diğer oturumlar kapatıldı.', !!r.error);
+        } }, 'Kapat')),
+        setRow('Hesabı sil', 'Her şey kalıcı olarak silinir', h('button', { class: 'btn danger small', type: 'button', onclick: deleteAccountModal }, 'Sil'))
+      ]));
+      return;
+    }
+    if (name === 'gizlilik') {
+      view.replaceChildren(secPage('Gizlilik ve güvenlik', [
+        setRow('Gizli hesap', 'Paylaşımlarını ve hikayelerini sadece onayladığın takipçiler görür', switchEl(me.is_private, async function (on, inp) {
+          var r = await sb.from('profiles').update({ is_private: on }).eq('id', me.id);
+          if (r.error) { inp.checked = !on; toast(friendlyError(r.error), true); return; }
+          me.is_private = on; toast(on ? 'Hesabın artık gizli.' : 'Hesabın herkese açık.');
+        }, 'Gizli hesap')),
+        setRow('Çevrimiçi durumum', 'Kapalıysa kimse seni çevrimiçi göremez', switchEl(PREF.get('presence', '1') !== '0', function (on) {
+          PREF.set('presence', on ? '1' : '0'); startRealtime();
+        }, 'Çevrimiçi durumum')),
+        h('div', { class: 'setsub' }, blockedBox())
+      ]));
+      return;
+    }
+    if (name === 'bildirim') {
+      view.replaceChildren(secPage('Bildirimler', [
+        pushBox(),
+        h('p', { class: 'hint', style: { margin: '14px 0 6px' } }, 'Uygulama açıkken çıkan kısa uyarılar:'),
+        setRow('Yeni mesaj', null, switchEl(npref('msg'), function (on) { PREF.set('np_msg', on ? '1' : '0'); }, 'Yeni mesaj uyarısı')),
+        setRow('Beğeni, yorum, takip', null, switchEl(npref('notif'), function (on) { PREF.set('np_notif', on ? '1' : '0'); }, 'Bildirim uyarısı'))
+      ]));
+      return;
+    }
+    if (name === 'gorunum') {
+      var sw = h('div', { class: 'swatches', role: 'group', 'aria-label': 'Vurgu rengi' });
+      function paintSw() {
+        var cur = PREF.get('accent', 'cobalt');
+        sw.replaceChildren.apply(sw, Object.keys(ACCENTS).map(function (k) {
+          var c = ACCENTS[k].l || '#2B44F0';
+          return h('button', { type: 'button', class: 'swatch' + (k === cur ? ' on' : ''), style: { background: c }, 'aria-label': ACCENTS[k].n, 'aria-pressed': k === cur ? 'true' : 'false', title: ACCENTS[k].n, onclick: function () { PREF.set('accent', k); applyPrefs(); paintSw(); renderHeader(); } });
+        }));
+      }
+      paintSw();
+      view.replaceChildren(secPage('Görünüm', [
+        h('div', { class: 'setblock' }, h('b', null, 'Tema'), segEl([['', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']], PREF.get('theme', ''), function (v) { if (v) PREF.set('theme', v); else PREF.del('theme'); applyPrefs(); renderHeader(); })),
+        h('div', { class: 'setblock' }, h('b', null, 'Vurgu rengi'), sw),
+        h('div', { class: 'setblock' }, h('b', null, 'Yazı boyutu'), segEl([['sm', 'Küçük'], ['md', 'Normal'], ['lg', 'Büyük']], PREF.get('fs', 'md'), function (v) { PREF.set('fs', v); applyPrefs(); })),
+        setRow('Animasyonlar', 'Kapatırsan geçişler ve hareketler durur', switchEl(PREF.get('motion', 'on') !== 'off', function (on) { PREF.set('motion', on ? 'on' : 'off'); applyPrefs(); }, 'Animasyonlar'))
+      ]));
+      return;
+    }
+    if (name === 'uygulama') {
+      view.replaceChildren(secPage('Uygulama ve veri', [
+        installBox(),
+        setRow('Verilerimi indir', 'Paylaşım, yorum, mesaj ve profil bilgin JSON dosyası olarak', h('button', { class: 'btn quiet small', type: 'button', onclick: async function (ev) {
+          var b = ev.currentTarget; b.disabled = true;
+          try { await exportMyData(); toast('Dosya hazır.'); } catch (e) { toast(friendlyError(e), true); }
+          b.disabled = false;
+        } }, icon('download'), 'İndir')),
+        setRow('Uygulamayı yenile', 'Bir şey bozuk görünüyorsa eski önbelleği temizler', h('button', { class: 'btn quiet small', type: 'button', onclick: async function () {
+          try {
+            if ('caches' in window) { var ks = await caches.keys(); await Promise.all(ks.map(function (k) { return caches.delete(k); })); }
+            if (navigator.serviceWorker) { var rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(function (r) { return r.unregister(); })); }
+          } catch (e) {}
+          location.reload();
+        } }, 'Yenile')),
+        h('p', { class: 'hint', style: { margin: '16px 0 0' } }, 'Kare · beta sürüm')
+      ]));
+      return;
+    }
+    settingsHome();
+  }
+
   function b64ToBytes(b64) {
     var pad = '='.repeat((4 - b64.length % 4) % 4);
     var raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -2183,13 +2407,13 @@
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + id }, function () {
         if (state.onNotif) { state.onNotif(); return; }
         bumpBadge('notif', 1);
-        toast('Yeni bildirimin var');
+        if (npref('notif')) toast('Yeni bildirimin var');
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'recipient_id=eq.' + id }, function (pl) {
         var m = pl.new;
         if (state.chat && m && state.chat.partnerId === m.sender_id) { state.chat.onMsg(m); return; }
         bumpBadge('msg', 1);
-        toast('Yeni mesajın var');
+        if (npref('msg')) toast('Yeni mesajın var');
         if (state.onConvUpdate) state.onConvUpdate();
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'group_messages' }, function (pl) {
@@ -2197,12 +2421,13 @@
         if (!m || m.sender_id === id) return;
         if (state.chat && state.chat.groupId === m.group_id) { state.chat.onMsg(m); return; }
         bumpBadge('msg', 1);
-        toast('Yeni grup mesajın var');
+        if (npref('msg')) toast('Yeni grup mesajın var');
         if (state.onConvUpdate) state.onConvUpdate();
       })
       .subscribe();
     if (chPresence) { sb.removeChannel(chPresence); chPresence = null; }
     chPresence = sb.channel('presence-online', { config: { presence: { key: id } } });
+    if (PREF.get('presence', '1') === '0') { sb.removeChannel(chPresence); chPresence = null; return; }
     chPresence.on('presence', { event: 'sync' }, function () {
       state.online = new Set(Object.keys(chPresence.presenceState()));
       paintOnline();
@@ -2400,7 +2625,8 @@
       else if (parts[0] === 'u' && parts[1]) await profilePage(parts[1], tok);
       else if (parts[0] === 'p' && parts[1]) await postPage(parts[1], tok);
       else if (parts[0] === 'favoriler') await favoritesPage(tok);
-      else if (parts[0] === 'ayarlar') await settingsPage(tok);
+      else if (parts[0] === 'ayarlar' && parts[1]) await settingsSection(parts[1], tok);
+      else if (parts[0] === 'ayarlar') settingsHome();
       else if (parts[0] === 'yonetim') await adminPage(tok);
       else if (parts[0] === 'ara') await searchPage(parts.slice(1).join('/'), tok);
       else if (parts[0] === 'bildirimler') await notificationsPage(tok);
@@ -2421,6 +2647,7 @@
 
   /* ================= başlangıç ================= */
   (async function init() {
+    applyPrefs();
     renderHeader();
     var r = await sb.auth.getSession();
     state.session = r.data && r.data.session;
