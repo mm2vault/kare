@@ -677,3 +677,5 @@ body.in-chat #ann { display: none; }
 .lrow .lhost { padding-top: 4px; }
 .lcol { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .lname.bad { color: #d6244a; }
+.cubewrap2 { flex: none; display: inline-block; line-height: 0; margin: -10px 0 -4px -8px; }
+.cubecv { display: block; }

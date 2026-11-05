@@ -1832,26 +1832,122 @@
   }
 
   /* ---- 3D zıplayan küp ---- */
-  function cubeEl(size) {
-    var faces = ['front', 'back', 'right', 'left', 'top', 'bottom'].map(function (f) { return h('i', { class: 'cf ' + f }, h('b', null, 'K')); });
-    var dust = [[-46, -10], [-30, -26], [-14, -34], [14, -34], [30, -26], [46, -10]].map(function (d, i) {
-      return h('i', { class: 'cdust', style: { '--dx': d[0] + 'px', '--dy': d[1] + 'px', marginLeft: (i - 3) * 4 + 'px' } });
-    });
-    return h('span', { class: 'cubewrap', style: { '--cs': (size || 64) + 'px' }, 'aria-hidden': 'true' },
-      h('span', { class: 'glow' }), h('span', { class: 'cshadow' }), h('span', { class: 'cring' }), dust,
-      h('span', { class: 'bouncer' }, h('span', { class: 'cube' }, faces)));
+  function cubeEl(size, ctl) {
+    size = size || 72; ctl = ctl || {};
+    var W = Math.round(size * 1.7), H = Math.round(size * 2.75), dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    var cv = h('canvas', { class: 'cubecv', width: Math.round(W * dpr), height: Math.round(H * dpr), style: { width: W + 'px', height: H + 'px' } });
+    var ctx = cv.getContext('2d');
+    var FACES = [
+      { v: [[-1, 1, 1], [1, 1, 1], [1, -1, 1], [-1, -1, 1]], n: [0, 0, 1], c: [74, 102, 255] },
+      { v: [[1, 1, -1], [-1, 1, -1], [-1, -1, -1], [1, -1, -1]], n: [0, 0, -1], c: [50, 76, 235] },
+      { v: [[1, 1, 1], [1, 1, -1], [1, -1, -1], [1, -1, 1]], n: [1, 0, 0], c: [40, 110, 235] },
+      { v: [[-1, 1, -1], [-1, 1, 1], [-1, -1, 1], [-1, -1, -1]], n: [-1, 0, 0], c: [90, 80, 235] },
+      { v: [[-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1]], n: [0, 1, 0], c: [140, 160, 255] },
+      { v: [[-1, -1, 1], [1, -1, 1], [1, -1, -1], [-1, -1, -1]], n: [0, -1, 0], c: [28, 44, 170] }
+    ];
+    var TILT = 0.42, F = 6, U = size * 0.36, GY = H - size * 0.28, CX = W / 2, HOP = size * 1.0;
+    var TWO = Math.PI * 2;
+    function ease(t) { return t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+    function out(t) { return 1 - (1 - t) * (1 - t); }
+    function inn(t) { return t * t; }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function pose(p) {
+      var sy, sx, hgt = 0, ang = 0;
+      if (p < .10) { sy = .72; sx = 1.25; }
+      else if (p < .18) { var t = (p - .10) / .08; sy = lerp(.72, 1.16, t); sx = lerp(1.25, .9, t); }
+      else if (p < .52) { var t2 = (p - .18) / .34; hgt = out(t2); sy = lerp(1.16, 1.04, t2); sx = lerp(.9, .98, t2); }
+      else if (p < .88) { var t3 = (p - .52) / .36; hgt = 1 - inn(t3); sy = lerp(1.04, 1.15, t3); sx = lerp(.98, .9, t3); }
+      else if (p < .93) { var t4 = (p - .88) / .05; sy = lerp(1.15, .68, t4); sx = lerp(.9, 1.3, t4); }
+      else { var t5 = (p - .93) / .07; sy = lerp(.68, .72, t5); sx = lerp(1.3, 1.25, t5); }
+      if (p > .12 && p < .86) ang = ease((p - .12) / .74) * TWO; else if (p >= .86) ang = TWO;
+      return { sx: sx, sy: sy, h: hgt, a: ang };
+    }
+    function draw(p, time) {
+      var ps = pose(p);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      // ışıma
+      var g = ctx.createRadialGradient(CX, GY - size * .9, 4, CX, GY - size * .9, W * .49);
+      g.addColorStop(0, 'rgba(43,68,240,' + (0.22 + ps.h * 0.2) + ')'); g.addColorStop(1, 'rgba(43,68,240,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      // gölge
+      var sh = 1.1 - ps.h * 0.65;
+      ctx.fillStyle = 'rgba(0,0,0,' + (0.32 - ps.h * 0.17) + ')';
+      ctx.beginPath(); ctx.ellipse(CX, GY + size * .05, size * .62 * sh, size * .12 * sh, 0, 0, TWO); ctx.fill();
+      // iniş halkası ve toz
+      if (p > .88) {
+        var rp = (p - .88) / .12;
+        ctx.strokeStyle = 'rgba(43,68,240,' + (0.8 * (1 - rp)) + ')'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(CX, GY + size * .05, size * (.5 + rp * 1.0), size * (.1 + rp * .2), 0, 0, TWO); ctx.stroke();
+        for (var d = 0; d < 6; d++) {
+          var dx = (d - 2.5) * size * .32 * rp, dy = -Math.sin(rp * Math.PI) * size * (.25 + (d % 2) * .12);
+          ctx.fillStyle = 'rgba(109,130,255,' + (0.9 * (1 - rp)) + ')';
+          ctx.beginPath(); ctx.arc(CX + dx, GY + dy, size * .045 * (1 + rp), 0, TWO); ctx.fill();
+        }
+      }
+      // küp
+      var ca = Math.cos(ps.a), sa = Math.sin(ps.a), ct = Math.cos(TILT), st = Math.sin(TILT);
+      function tr(v) {
+        var x = v[0] * ps.sx, y = v[1] * ps.sy, z = v[2] * ps.sx;
+        var x1 = x * ca + z * sa, z1 = -x * sa + z * ca;
+        var y2 = y * ct - z1 * st, z2 = y * st + z1 * ct;
+        return [x1, y2, z2];
+      }
+      var cyc = GY - ps.sy * U * 1.02 - ps.h * HOP;
+      var vis = [];
+      FACES.forEach(function (f) {
+        var nv = tr(f.n.map(function (q, i) { return q; }));
+        // normal: sadece döndür (ölçek yok)
+        var n = f.n, x1 = n[0] * ca + n[2] * sa, z1 = -n[0] * sa + n[2] * ca, nz = n[1] * st + z1 * ct;
+        if (nz <= 0.001) return;
+        var pts = f.v.map(function (v) { var t = tr(v), s = F / (F - t[2]); return [CX + t[0] * U * s, cyc - t[1] * U * s]; });
+        var dz = 0; f.v.forEach(function (v) { dz += tr(v)[2]; });
+        var ny = n[1] * ct - z1 * st, nxr = x1;
+        var light = Math.max(0, nxr * -.35 + ny * .55 + nz * .6);
+        vis.push({ f: f, pts: pts, z: dz, k: 0.62 + 0.45 * light });
+      });
+      vis.sort(function (a, b) { return a.z - b.z; });
+      vis.forEach(function (o) {
+        var c = o.f.c, k = o.k;
+        ctx.beginPath(); ctx.moveTo(o.pts[0][0], o.pts[0][1]);
+        for (var i = 1; i < 4; i++) ctx.lineTo(o.pts[i][0], o.pts[i][1]);
+        ctx.closePath();
+        ctx.fillStyle = 'rgb(' + Math.min(255, Math.round(c[0] * k)) + ',' + Math.min(255, Math.round(c[1] * k)) + ',' + Math.min(255, Math.round(c[2] * k)) + ')';
+        ctx.fill();
+        ctx.lineJoin = 'round'; ctx.lineWidth = size * .045; ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.stroke();
+        // harf
+        var p0 = o.pts[0], p1 = o.pts[1], p3 = o.pts[3];
+        ctx.save();
+        ctx.setTransform(dpr * (p1[0] - p0[0]) / 100, dpr * (p1[1] - p0[1]) / 100, dpr * (p3[0] - p0[0]) / 100, dpr * (p3[1] - p0[1]) / 100, dpr * p0[0], dpr * p0[1]);
+        ctx.font = '800 62px "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = 'rgba(255,255,255,.96)';
+        ctx.fillText('K', 50, 54);
+        ctx.restore();
+      });
+    }
+    var raf = 0, start = performance.now(), phase = 0, last = start;
+    var still = (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) || document.documentElement.getAttribute('data-motion') === 'off';
+    function frame(now) {
+      if (!cv.isConnected) { if (now - start > 1500) return; raf = requestAnimationFrame(frame); return; }
+      var dt = Math.min(0.05, (now - last) / 1000); last = now;
+      phase = (phase + dt / (ctl.fast ? 0.75 : 1.5)) % 1;
+      draw(phase);
+      raf = requestAnimationFrame(frame);
+    }
+    if (still) draw(0.45); else { draw(0.3); raf = requestAnimationFrame(frame); }
+    return h('span', { class: 'cubewrap2', 'aria-hidden': 'true' }, cv);
   }
   function apkCard() {
-    var card = h('div', { class: 'apkcard' });
+    var card = h('div', { class: 'apkcard' }), ctl = { fast: false };
     var btn = h('a', { class: 'btn', href: APK_URL, rel: 'noopener', onclick: function () {
-      card.classList.add('going'); btn.lastChild.textContent = 'İndiriliyor…';
-      setTimeout(function () { card.classList.remove('going'); btn.lastChild.textContent = 'Tekrar indir'; }, 4000);
+      ctl.fast = true; btn.lastChild.textContent = 'İndiriliyor…';
+      setTimeout(function () { ctl.fast = false; btn.lastChild.textContent = 'Tekrar indir'; }, 4000);
     } }, icon('download'), h('span', null, 'Kare’yi indir'));
-    card.append(cubeEl(72), h('div', { class: 'apkt' }, h('b', null, 'Kare Android uygulaması'), h('span', { class: 'hint' }, 'Ana ekrana gelir, tam ekran açılır. Site güncellemeleri otomatik gelir.'), btn));
+    card.append(cubeEl(72, ctl), h('div', { class: 'apkt' }, h('b', null, 'Kare Android uygulaması'), h('span', { class: 'hint' }, 'Ana ekrana gelir, tam ekran açılır. Site güncellemeleri otomatik gelir.'), btn));
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.0953';
+  var APP_VERSION = '2026.11.05.0957';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
