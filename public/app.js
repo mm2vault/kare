@@ -2362,30 +2362,134 @@
     var form = composer(async function (body, prep) {
       var media = null;
       if (prep) { var path = await uploadMsgMedia(prep); media = { path: path, type: prep.type }; }
-      var res = await spec.send(body || (media ? MEDIA_PLACE[media.type] : ''), media);
+      var res = await spec.send(body || (media ? MEDIA_PLACE[media.type] : ''), media, replyTo ? replyTo.id : null);
       if (res.error) { if (media) removeFile(media.path); toast(friendlyError(res.error), true); return false; }
-      addMsg(res.data); return true;
+      setReply(null); addMsg(res.data); return true;
     }, function () {
       tch.send({ type: 'broadcast', event: 'typing', payload: { uid: state.me.id, name: nameOf(state.me) } });
     });
     var head = spec.head(typingEl);
     view.replaceChildren(h('div', { class: 'chat page-in' }, head, box, form));
-    function addMsg(m) {
-      var empty = box.querySelector('.hint'); if (empty) empty.remove();
+    var byId = {}, els = {}, rx = {}, lastDay = '', replyTo = null;
+    var EMO = ['❤️', '😂', '😮', '😢', '🔥', '👍'];
+    var kind = spec.isGroup ? 'group' : 'dm';
+    function clock(t) { var d = new Date(t); return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }); }
+    function dayLabel(t) {
+      var d = new Date(t), n = new Date(), y = new Date(Date.now() - 864e5);
+      if (d.toDateString() === n.toDateString()) return 'Bugün';
+      if (d.toDateString() === y.toDateString()) return 'Dün';
+      return d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: d.getFullYear() === n.getFullYear() ? undefined : 'numeric' });
+    }
+    function snippet(m) {
+      if (!m) return 'Mesaj';
+      if (m.deleted_at) return 'Mesaj silindi';
+      if (m.media_path && (!m.body || m.body === MEDIA_PLACE[m.media_type])) return m.media_type === 'audio' ? '🎤 Sesli mesaj' : m.media_type === 'video' ? '🎬 Video' : '📷 Fotoğraf';
+      return String(m.body || '').replace(/\S*#\/p\/[0-9a-f-]{36}\S*/i, '🖼 Gönderi').slice(0, 90);
+    }
+    var replyBar = h('div', { class: 'replybar', hidden: true });
+    function setReply(m) {
+      replyTo = m;
+      if (!m) { replyBar.hidden = true; return; }
+      var who = m.sender_id === state.me.id ? 'Kendine' : nameOf((spec.profiles && spec.profiles[m.sender_id]) || spec.other);
+      replyBar.replaceChildren(h('span', { class: 'rb-t' }, h('b', null, who + ' kişisine yanıt'), h('span', null, snippet(m))), h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Yanıtı iptal et', onclick: function () { setReply(null); } }, icon('x')));
+      replyBar.hidden = false;
+      var inp = $('#m-in'); if (inp) inp.focus();
+    }
+    form.before(replyBar);
+    function drawRx(id) {
+      var el = els[id]; if (!el) return;
+      var host = el.querySelector('.rx'); if (!host) return;
+      var c = {};
+      Object.keys(rx[id] || {}).forEach(function (u) { var e = rx[id][u]; if (e) c[e] = (c[e] || 0) + 1; });
+      var mine = (rx[id] || {})[state.me.id];
+      host.replaceChildren.apply(host, Object.keys(c).map(function (e) {
+        return h('button', { type: 'button', class: 'rxc' + (mine === e ? ' on' : ''), onclick: function (ev) { ev.stopPropagation(); react(id, e); } }, e + (c[e] > 1 ? ' ' + c[e] : ''));
+      }));
+      host.hidden = !host.firstChild;
+    }
+    async function react(id, emo) {
+      var cur = (rx[id] || {})[state.me.id];
+      var want = cur === emo ? '' : emo;
+      rx[id] = rx[id] || {}; rx[id][state.me.id] = want; drawRx(id);
+      var r = cur === undefined
+        ? await sb.from('message_reactions').insert({ message_id: id, kind: kind, user_id: state.me.id, emoji: want })
+        : await sb.from('message_reactions').update({ emoji: want }).eq('message_id', id).eq('user_id', state.me.id);
+      if (r.error) { rx[id][state.me.id] = cur; drawRx(id); toast(friendlyError(r.error), true); }
+    }
+    function actionSheet(m) {
+      var mine = m.sender_id === state.me.id, mm;
+      var body = h('div', { style: { display: 'contents' } },
+        h('div', { class: 'emorow' }, EMO.map(function (e) { return h('button', { type: 'button', onclick: function () { mm.close(); react(m.id, e); } }, e); })),
+        h('div', { class: 'sheet' },
+          h('button', { type: 'button', onclick: function () { mm.close(); setReply(m); } }, icon('back'), 'Yanıtla'),
+          m.body && !m.media_path ? h('button', { type: 'button', onclick: function () {
+            mm.close();
+            if (navigator.clipboard) navigator.clipboard.writeText(m.body).then(function () { toast('Kopyalandı.'); });
+          } }, icon('link'), 'Kopyala') : null,
+          mine ? h('button', { type: 'button', class: 'danger', onclick: async function () {
+            mm.close();
+            if (!(await confirmModal('Mesaj herkes için silinsin mi?', 'Sil', true))) return;
+            var r = await sb.from(spec.table).update({ deleted_at: new Date().toISOString() }).eq('id', m.id);
+            if (r.error) { toast(friendlyError(r.error), true); return; }
+            applyUpdate({ id: m.id, deleted_at: new Date().toISOString(), body: '', media_path: null, media_type: null });
+          } }, icon('trash'), 'Sil') : null));
+      mm = modal(body, 'Mesaj seçenekleri');
+    }
+    function bubble(m) {
       var mine = m.sender_id === state.me.id;
       var sender = spec.isGroup && !mine ? spec.profiles[m.sender_id] : null;
-      box.append(h('div', { class: 'bub' + (mine ? ' mine' : '') },
-        sender ? h('b', { class: 'mname' }, nameOf(sender)) : null,
-        msgBody(m), h('span', { class: 'mono' }, timeAgo(m.created_at))));
+      var del = !!m.deleted_at;
+      var q = null;
+      if (m.reply_to && !del) {
+        var rm = byId[m.reply_to];
+        q = h('button', { type: 'button', class: 'quote', onclick: function (ev) { ev.stopPropagation(); var t = els[m.reply_to]; if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); t.classList.add('flash'); setTimeout(function () { t.classList.remove('flash'); }, 1200); } } },
+          h('b', null, rm ? (rm.sender_id === state.me.id ? 'Sen' : nameOf((spec.profiles && spec.profiles[rm.sender_id]) || spec.other)) : 'Mesaj'), h('span', null, snippet(rm)));
+      }
+      var tick = null;
+      if (mine && !spec.isGroup && !del) tick = h('span', { class: 'tick' + (m.read_at ? ' seen' : ''), 'aria-label': m.read_at ? 'Görüldü' : 'Gönderildi' }, m.read_at ? '✓✓' : '✓');
+      var el = h('div', { class: 'bub' + (mine ? ' mine' : '') + (del ? ' gone' : ''), 'data-id': m.id },
+        sender ? h('b', { class: 'mname' }, nameOf(sender)) : null, q,
+        del ? h('span', { class: 'mbody' }, h('i', null, 'Mesaj silindi')) : msgBody(m),
+        h('span', { class: 'mono mt' }, clock(m.created_at), tick), h('div', { class: 'rx', hidden: true }));
+      if (!del) {
+        el.addEventListener('click', function (ev) { if (ev.target.closest('a, video, audio, button, input')) return; actionSheet(m); });
+        var dbl = 0;
+        el.addEventListener('dblclick', function (ev) { if (ev.target.closest('a, video, audio, button')) return; react(m.id, '❤️'); });
+      }
+      return el;
+    }
+    function addMsg(m) {
+      if (els[m.id]) return;
+      var empty = box.querySelector('.hint'); if (empty) empty.remove();
+      var day = new Date(m.created_at).toDateString();
+      if (day !== lastDay) { lastDay = day; box.append(h('div', { class: 'daysep' }, h('span', null, dayLabel(m.created_at)))); }
+      byId[m.id] = m;
+      var el = bubble(m); els[m.id] = el; box.append(el); drawRx(m.id);
       box.scrollTop = box.scrollHeight;
+    }
+    function applyUpdate(u) {
+      var m = byId[u.id]; if (!m) return;
+      Object.assign(m, u);
+      var old = els[m.id], el = bubble(m);
+      old.replaceWith(el); els[m.id] = el; drawRx(m.id);
+    }
+    async function loadReactions(ids) {
+      for (var i = 0; i < ids.length; i += 80) {
+        var r = await sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id', ids.slice(i, i + 80));
+        (r.data || []).forEach(function (x) { rx[x.message_id] = rx[x.message_id] || {}; rx[x.message_id][x.user_id] = x.emoji; });
+      }
+      ids.forEach(drawRx);
     }
     var msgs = await spec.load();
     if (tok !== routeTok) { sb.removeChannel(tch); form.cleanup(); return; }
     if (!msgs.length) box.append(h('p', { class: 'hint', style: { textAlign: 'center', margin: 'auto' } }, spec.emptyText));
     msgs.forEach(addMsg);
+    loadReactions(msgs.map(function (m) { return m.id; }));
     spec.markRead();
     state.chat = Object.assign({
       onMsg: function (m) { addMsg(m); spec.markRead(); },
+      onUpdate: function (u) { applyUpdate(u); },
+      onReact: function (x) { if (x.kind !== kind || !els[x.message_id]) return; rx[x.message_id] = rx[x.message_id] || {}; rx[x.message_id][x.user_id] = x.emoji; drawRx(x.message_id); },
       cleanup: function () { sb.removeChannel(tch); form.cleanup(); }
     }, spec.id);
     if (window.matchMedia && matchMedia('(hover: hover)').matches) $('#m-in').focus();
@@ -2399,8 +2503,9 @@
     if (!pr.data) { view.replaceChildren(emptyState('Kullanıcı bulunamadı', null, h('a', { class: 'btn', href: '#/mesajlar' }, 'Mesajlara dön'))); return; }
     var other = pr.data, me = state.me.id;
     if (other.id === me) { location.hash = '#/mesajlar'; return; }
-    var cols = 'id,sender_id,recipient_id,body,media_path,media_type,created_at';
+    var cols = 'id,sender_id,recipient_id,body,media_path,media_type,created_at,read_at,reply_to,deleted_at';
     await runChat(view, tok, {
+      table: 'messages', other: other,
       typingKey: [me, other.id].sort().join('-'),
       id: { partnerId: other.id },
       emptyText: 'Konuşmayı başlat. İlk mesajı sen yaz.',
@@ -2416,8 +2521,8 @@
           .order('created_at', { ascending: false }).limit(200);
         return (r.data || []).slice().reverse();
       },
-      send: function (body, media) {
-        return sb.from('messages').insert({ sender_id: me, recipient_id: other.id, body: body, media_path: media ? media.path : null, media_type: media ? media.type : null }).select(cols).single();
+      send: function (body, media, replyId) {
+        return sb.from('messages').insert({ sender_id: me, recipient_id: other.id, body: body, reply_to: replyId, media_path: media ? media.path : null, media_type: media ? media.type : null }).select(cols).single();
       },
       markRead: function () {
         sb.from('messages').update({ read_at: new Date().toISOString() }).eq('recipient_id', me).eq('sender_id', other.id).is('read_at', null)
@@ -2439,9 +2544,9 @@
     if (tok !== routeTok) return;
     var profiles = {};
     (pr.data || []).forEach(function (p) { profiles[p.id] = p; });
-    var cols = 'id,group_id,sender_id,body,media_path,media_type,created_at';
+    var cols = 'id,group_id,sender_id,body,media_path,media_type,created_at,reply_to,deleted_at';
     await runChat(view, tok, {
-      isGroup: true, profiles: profiles,
+      isGroup: true, profiles: profiles, table: 'group_messages',
       typingKey: 'g-' + gid,
       id: { groupId: gid },
       emptyText: 'Grup hazır. İlk mesajı sen yaz.',
@@ -2467,8 +2572,8 @@
         var r = await sb.from('group_messages').select(cols).eq('group_id', gid).order('created_at', { ascending: false }).limit(200);
         return (r.data || []).slice().reverse();
       },
-      send: function (body, media) {
-        return sb.from('group_messages').insert({ group_id: gid, sender_id: me, body: body, media_path: media ? media.path : null, media_type: media ? media.type : null }).select(cols).single();
+      send: function (body, media, replyId) {
+        return sb.from('group_messages').insert({ group_id: gid, sender_id: me, body: body, reply_to: replyId, media_path: media ? media.path : null, media_type: media ? media.type : null }).select(cols).single();
       },
       markRead: function () {
         sb.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', gid).eq('user_id', me)
@@ -2619,6 +2724,15 @@
         bumpBadge('msg', 1);
         if (npref('msg')) toast('Yeni mesajın var');
         if (state.onConvUpdate) state.onConvUpdate();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, function (pl) {
+        if (state.chat && state.chat.onUpdate && pl.new && state.chat.partnerId) state.chat.onUpdate(pl.new);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_messages' }, function (pl) {
+        if (state.chat && state.chat.onUpdate && pl.new && state.chat.groupId) state.chat.onUpdate(pl.new);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, function (pl) {
+        if (state.chat && state.chat.onReact && pl.new && pl.new.user_id !== id) state.chat.onReact(pl.new);
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'group_messages' }, function (pl) {
         var m = pl.new;

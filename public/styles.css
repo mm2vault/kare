@@ -564,3 +564,33 @@ body.in-chat #ann { display: none; }
 .card .burst svg { width: 110px; height: 110px; }
 .media img { animation: fade .5s ease both; }
 @media (min-width: 900px) { .card-detail-wide { max-width: 980px; } }
+
+/* ===== v9: sohbet ===== */
+.daysep { align-self: center; margin: 10px 0 4px; }
+.daysep span { font-size: 12px; background: var(--surface-2); color: var(--muted, #667); padding: 4px 12px; border-radius: 999px; }
+.bub { position: relative; cursor: pointer; transition: background .6s; }
+.bub.flash { outline: 2px solid var(--accent); }
+.bub.gone { opacity: .6; font-style: italic; }
+.bub .mt { display: flex; gap: 5px; align-items: center; }
+.tick { letter-spacing: -2px; font-size: 11px; }
+.tick.seen { color: #7fe3ff; opacity: 1; }
+.bub:not(.mine) .tick.seen { color: var(--accent); }
+.quote { display: flex; flex-direction: column; text-align: left; border: 0; border-left: 3px solid currentColor; background: rgba(127,127,127,.18); color: inherit; border-radius: 8px; padding: 4px 8px; margin-bottom: 4px; font-size: 12px; max-width: 100%; }
+.quote span { opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rx { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 -18px; align-self: flex-start; }
+.bub.mine .rx { align-self: flex-end; }
+.rx[hidden] { display: none; }
+.rxc { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 1px 7px; font-size: 13px; line-height: 1.5; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.rxc.on { border-color: var(--accent); }
+.bub:has(.rxc) { margin-bottom: 18px; }
+.replybar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.replybar[hidden] { display: none; }
+.rb-t { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; border-left: 3px solid var(--accent); padding-left: 8px; }
+.rb-t span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .75; }
+.emorow { display: flex; justify-content: space-around; padding: 6px 0 10px; }
+.emorow button { font-size: 30px; background: none; border: 0; padding: 4px 6px; border-radius: 12px; transition: transform .15s; }
+.emorow button:active { transform: scale(1.3); }
+.sheet { display: flex; flex-direction: column; }
+.sheet button { display: flex; align-items: center; gap: 12px; padding: 12px 6px; background: none; border: 0; border-top: 1px solid var(--line); color: var(--text); font-size: 16px; text-align: left; }
+.sheet button.danger { color: #d6244a; }
+.sheet svg { width: 20px; height: 20px; }
