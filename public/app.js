@@ -1739,6 +1739,39 @@
     view.replaceChildren(secPage('Profil', [form]));
   }
 
+  /* ---- sürüm denetimi ---- */
+  var APP_VERSION = '2026.11.05.0929';
+  var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
+  function hardRefresh() {
+    return (async function () {
+      try {
+        if ('caches' in window) { var ks = await caches.keys(); await Promise.all(ks.map(function (k) { return caches.delete(k); })); }
+        if (navigator.serviceWorker) { var rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(function (r) { return r.unregister(); })); }
+      } catch (e) {}
+      location.reload();
+    })();
+  }
+  function showUpdateBar() {
+    if (document.getElementById('upd')) return;
+    var bar = h('div', { id: 'upd', class: 'updbar', role: 'status' }, h('span', null, 'Kare’nin yeni sürümü hazır.'),
+      h('button', { class: 'btn small', type: 'button', onclick: hardRefresh }, 'Güncelle'),
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Sonra', onclick: function () { bar.remove(); } }, icon('x')));
+    document.body.append(bar);
+  }
+  async function checkUpdate() {
+    try {
+      var r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return null;
+      var d = await r.json();
+      var has = APP_VERSION !== 'dev' && d.version && d.version !== APP_VERSION;
+      if (has) showUpdateBar();
+      return { has: has, version: d.version };
+    } catch (e) { return null; }
+  }
+  setTimeout(checkUpdate, 4000);
+  setInterval(checkUpdate, 10 * 60 * 1000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkUpdate(); });
+
   /* ---- uygulama gibi yükleme (PWA) ---- */
   var deferredInstall = null;
   window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); deferredInstall = e; });
@@ -1956,6 +1989,17 @@
           try { await exportMyData(); toast('Dosya hazır.'); } catch (e) { toast(friendlyError(e), true); }
           b.disabled = false;
         } }, icon('download'), 'İndir')),
+        setRow('Sürüm ' + APP_VERSION, 'Yeni sürüm çıkınca üstte bir uyarı görünür', (function () {
+          var b = h('button', { class: 'btn quiet small', type: 'button', onclick: async function () {
+            b.disabled = true; b.textContent = 'Bakılıyor…';
+            var r = await checkUpdate();
+            b.disabled = false; b.textContent = 'Güncellemeleri denetle';
+            if (!r) toast('Denetlenemedi, bağlantını kontrol et.', true);
+            else if (!r.has) toast('Güncelsin ✓');
+          } }, 'Güncellemeleri denetle');
+          return b;
+        })()),
+        setRow('Android uygulaması (APK)', 'Android telefon için indir. Site güncellemeleri uygulamaya otomatik gelir.', h('a', { class: 'btn small', href: APK_URL, rel: 'noopener' }, icon('download'), 'İndir')),
         setRow('Uygulamayı yenile', 'Bir şey bozuk görünüyorsa eski önbelleği temizler', h('button', { class: 'btn quiet small', type: 'button', onclick: async function () {
           try {
             if ('caches' in window) { var ks = await caches.keys(); await Promise.all(ks.map(function (k) { return caches.delete(k); })); }
@@ -1963,7 +2007,7 @@
           } catch (e) {}
           location.reload();
         } }, 'Yenile')),
-        h('p', { class: 'hint', style: { margin: '16px 0 0' } }, 'Kare · beta sürüm')
+        h('p', { class: 'hint', style: { margin: '16px 0 0' } }, 'Kare · sürüm ' + APP_VERSION)
       ]));
       return;
     }
