@@ -1947,7 +1947,7 @@
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.1001';
+  var APP_VERSION = '2026.11.05.1544';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
@@ -2379,6 +2379,15 @@
 
     async function discover() {
       var nodes = [];
+      var since = new Date(Date.now() - 14 * 864e5).toISOString();
+      var hot = await sb.from('posts').select(GRID_SEL + ',user_id').gte('created_at', since).order('created_at', { ascending: false }).limit(80);
+      var hp = (hot.data || []).filter(function (x) { return !hidden(x.user_id); }).map(function (x) { return { p: x, sc: cnt(x.likes) * 2 + cnt(x.comments) * 3 }; })
+        .sort(function (a, b) { return b.sc - a.sc; }).slice(0, 12).map(function (x) { return x.p; });
+      if (hp.length) {
+        var hg = h('div', { class: 'grid' });
+        hp.forEach(function (x, i) { hg.append(gridTile(x, i)); });
+        nodes.push(h('section', null, sectionTitle('Keşfet · popüler paylaşımlar'), hg));
+      }
       var pr = await sb.from('profiles').select(PROFILE_SEL).order('created_at', { ascending: false }).limit(14);
       var ps = (pr.data || []).filter(function (p) { return !(state.me && p.id === state.me.id) && !state.following.has(p.id) && !hidden(p.id); }).slice(0, 8);
       var tg = await sb.from('posts').select('caption').not('caption', 'is', null).order('created_at', { ascending: false }).limit(150);
