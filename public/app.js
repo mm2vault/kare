@@ -662,7 +662,7 @@
   }
 
   /* ================= veri katmanı ================= */
-  var ME_SEL = 'id,username,display_name,bio,avatar_path,banner_path,is_admin,is_private,pinned_post_id';
+  var ME_SEL = 'id,username,display_name,bio,avatar_path,banner_path,is_admin,is_private,pinned_post_id,links';
   var PROFILE_SEL = 'id,username,display_name,avatar_path';
   var POST_SEL = 'id,user_id,caption,media_path,media_type,width,height,created_at,edited_at,media:post_media(position,media_path,media_type,width,height),author:profiles!posts_user_id_fkey(' + PROFILE_SEL + '),likes(count),comments(count),reposts(count)';
   var GRID_SEL = 'id,media_path,media_type,media:post_media(position),likes(count),comments(count)';
@@ -1533,7 +1533,7 @@
   async function profilePage(username, tok) {
     var view = $('#view');
     view.replaceChildren(h('div', { class: 'sk sk-card', style: { height: '220px' } }));
-    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path,banner_path,pinned_post_id,is_private,created_at').eq('username', username.toLowerCase()).maybeSingle();
+    var r = await sb.from('profiles').select('id,username,display_name,bio,avatar_path,banner_path,pinned_post_id,is_private,links,created_at').eq('username', username.toLowerCase()).maybeSingle();
     if (tok !== routeTok) return;
     if (r.error || !r.data) { view.replaceChildren(emptyState('Kullanıcı bulunamadı', '@' + username + ' adında biri yok.', h('a', { class: 'btn', href: '#/' }, 'Ana sayfa'))); return; }
     var pr = r.data;
@@ -1573,6 +1573,7 @@
           h('div', null, followersEl, h('span', { class: 'mono' }, 'Takipçi')),
           h('div', null, h('b', null, fmt(nFollowing)), h('span', { class: 'mono' }, 'Takip'))),
         pr.bio ? h('p', { class: 'bio' }, pr.bio) : null,
+        linkChips(pr.links),
         h('div', { class: 'prow' }, action, isMe ? null : h('a', { class: 'btn quiet small', href: '#/mesajlar/' + encodeURIComponent(pr.username) }, 'Mesaj'),
           isMe || !state.me ? null : h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Daha fazla', onclick: function () { blockMenu(pr); } }, icon('more'))),
         pr.is_private ? h('span', { class: 'hint mono' }, '🔒 Gizli hesap') : null,
@@ -1706,6 +1707,7 @@
     var dn = h('input', { class: 'input', id: 's-dn', type: 'text', maxlength: '40', value: me.display_name || '' });
     var bio = h('textarea', { class: 'textarea', id: 's-bio', maxlength: '160' });
     bio.value = me.bio || '';
+    var linkEd = linksEditor(me.links);
     var err = h('div', { class: 'hint bad', role: 'alert' });
     var save = h('button', { class: 'btn', type: 'submit' }, 'Kaydet');
     var form = h('form', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
@@ -1715,12 +1717,13 @@
         h('div', { class: 'prow' }, h('label', { class: 'btn quiet small', for: 's-bn' }, 'Banner seç'), bnRemove), h('span', { class: 'hint' }, 'Geniş (3:1) bir fotoğraf en iyisi. Otomatik kırpılır.')),
       h('div', { class: 'field' }, h('label', { for: 's-dn' }, 'Görünen ad'), dn),
       h('div', { class: 'field' }, h('label', { for: 's-bio' }, 'Hakkında'), bio, h('span', { class: 'hint' }, 'En fazla 160 karakter.')),
+      linkEd.el,
       err,
       h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } }, save, h('a', { class: 'btn quiet', href: '#/u/' + encodeURIComponent(me.username) }, 'Profilime dön')));
     form.addEventListener('submit', async function (ev) {
       ev.preventDefault(); err.textContent = ''; save.disabled = true;
       try {
-        var patch = { display_name: dn.value.trim() || null, bio: bio.value.trim() || null };
+        var patch = { display_name: dn.value.trim() || null, bio: bio.value.trim() || null, links: linkEd.get() };
         var oldPath = me.avatar_path, oldBanner = me.banner_path;
         if (newBanner) patch.banner_path = await uploadPrepared(newBanner, 'banner-');
         else if (removeBanner) patch.banner_path = null;
@@ -1737,6 +1740,95 @@
     });
     if (tok !== routeTok) return;
     view.replaceChildren(secPage('Profil', [form]));
+  }
+
+  /* ---- profil bağlantıları ---- */
+  var BRANDS = [
+    [/(^|\.)instagram\.com$|^instagr\.am$/, 'instagram', 'Instagram', '#E4405F'],
+    [/(^|\.)tiktok\.com$/, 'tiktok', 'TikTok', '#111111'],
+    [/(^|\.)youtube\.com$|^youtu\.be$/, 'youtube', 'YouTube', '#FF0000'],
+    [/(^|\.)(twitter|x)\.com$/, 'x', 'X', '#111111'],
+    [/^t\.me$|(^|\.)telegram\.(me|org)$/, 'telegram', 'Telegram', '#26A5E4'],
+    [/^wa\.me$|(^|\.)whatsapp\.com$/, 'whatsapp', 'WhatsApp', '#25D366'],
+    [/(^|\.)github\.com$/, 'github', 'GitHub', '#24292F'],
+    [/(^|\.)discord\.(gg|com)$/, 'discord', 'Discord', '#5865F2'],
+    [/(^|\.)twitch\.tv$/, 'twitch', 'Twitch', '#9146FF'],
+    [/(^|\.)spotify\.com$/, 'spotify', 'Spotify', '#1DB954'],
+    [/(^|\.)snapchat\.com$/, 'snapchat', 'Snapchat', '#F2B800'],
+    [/(^|\.)(facebook|fb)\.com$|^fb\.me$/, 'facebook', 'Facebook', '#0866FF'],
+    [/(^|\.)linkedin\.com$/, 'linkedin', 'LinkedIn', '#0A66C2'],
+    [/(^|\.)roblox\.com$/, 'roblox', 'Roblox', '#E2231A'],
+    [/(^|\.)steamcommunity\.com$/, 'steam', 'Steam', '#1B2838'],
+    [/(^|\.)kick\.com$/, 'kick', 'Kick', '#2FB80F'],
+    [/(^|\.)pinterest\.[a-z.]+$/, 'pinterest', 'Pinterest', '#E60023'],
+    [/(^|\.)reddit\.com$/, 'reddit', 'Reddit', '#FF4500'],
+    [/(^|\.)soundcloud\.com$/, 'soundcloud', 'SoundCloud', '#FF5500'],
+    [/(^|\.)threads\.(net|com)$/, 'threads', 'Threads', '#111111'],
+    [/(^|\.)vk\.com$/, 'vk', 'VK', '#0077FF'],
+    [/(^|\.)patreon\.com$/, 'patreon', 'Patreon', '#FF424D'],
+    [/(^|\.)linktr\.ee$/, 'linktree', 'Linktree', '#2BB556'],
+    [/(^|\.)medium\.com$/, 'medium', 'Medium', '#111111'],
+    [/(^|\.)behance\.net$/, 'behance', 'Behance', '#1769FF'],
+    [/(^|\.)dribbble\.com$/, 'dribbble', 'Dribbble', '#EA4C89'],
+    [/(^|\.)ko-fi\.com$/, 'kofi', 'Ko-fi', '#FF5E5B'],
+    [/(^|\.)buymeacoffee\.com$/, 'buymeacoffee', 'Buy Me a Coffee', '#E8A400'],
+    [/(^|\.)vimeo\.com$/, 'vimeo', 'Vimeo', '#1AB7EA']
+  ];
+  function normLink(raw) {
+    var t = String(raw || '').trim();
+    if (!t) return null;
+    if (!/^https?:\/\//i.test(t)) t = 'https://' + t.replace(/^\/+/, '');
+    try {
+      var u = new URL(t);
+      if (!/^https?:$/.test(u.protocol) || u.hostname.indexOf('.') < 0) return null;
+      return u.href.length > 200 ? null : u.href;
+    } catch (e) { return null; }
+  }
+  function linkInfo(url) {
+    var u; try { u = new URL(url); } catch (e) { return null; }
+    var host = u.hostname.toLowerCase().replace(/^www\./, '');
+    var b = BRANDS.find(function (x) { return x[0].test(host); });
+    var path = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+    var handle = path.length ? decodeURIComponent(path[path.length - 1]) : '';
+    if (handle && handle.length > 24) handle = handle.slice(0, 23) + '…';
+    return { url: u.href, host: host, slug: b ? b[1] : null, name: b ? b[2] : host, color: b ? b[3] : '#667085', label: b && handle && !/^(channel|user|c|watch|in|company|profile\.php)$/i.test(handle) ? (/^@/.test(handle) ? handle : (b[1] === 'youtube' || b[1] === 'tiktok' || b[1] === 'instagram' || b[1] === 'x' || b[1] === 'github' || b[1] === 'twitch' || b[1] === 'kick' || b[1] === 'threads' ? '@' + handle : handle)) : (b ? b[2] : host) };
+  }
+  function brandLogo(info, size) {
+    var el = h('span', { class: 'blogo', style: { '--bc': info.color, '--bs': (size || 30) + 'px' }, 'aria-hidden': 'true' });
+    if (info.slug) el.append(h('i', { style: { '-webkit-mask-image': 'url(https://cdn.jsdelivr.net/npm/simple-icons@11.14.0/icons/' + info.slug + '.svg)', maskImage: 'url(https://cdn.jsdelivr.net/npm/simple-icons@11.14.0/icons/' + info.slug + '.svg)' } }));
+    else el.append(icon('link'));
+    return el;
+  }
+  function linkChips(links) {
+    var arr = (Array.isArray(links) ? links : []).map(linkInfo).filter(Boolean);
+    if (!arr.length) return null;
+    return h('div', { class: 'plinks' }, arr.map(function (i) {
+      return h('a', { class: 'plink', href: i.url, target: '_blank', rel: 'noopener noreferrer nofollow ugc', title: i.name }, brandLogo(i, 22), h('span', null, i.label));
+    }));
+  }
+  function linksEditor(initial) {
+    var vals = (initial || []).slice(0, 6), host = h('div', { class: 'ledit' });
+    var addB = h('button', { class: 'btn quiet small', type: 'button', onclick: function () { vals.push(''); draw(); var ins = host.querySelectorAll('input'); ins[ins.length - 1].focus(); } }, icon('plus'), 'Bağlantı ekle');
+    function draw() {
+      host.replaceChildren.apply(host, vals.map(function (v, i) {
+        var logoHost = h('span', { class: 'lhost' });
+        function paint() {
+          var n = normLink(vals[i]), inf = n && linkInfo(n);
+          logoHost.replaceChildren(inf ? brandLogo(inf, 34) : h('span', { class: 'blogo empty', style: { '--bs': '34px' } }, icon('link')));
+          nm.textContent = inf ? (inf.slug ? inf.name + ' bulundu' : 'Bağlantı') : (vals[i] ? 'Geçerli bir adres yaz' : '');
+          nm.classList.toggle('bad', !!vals[i] && !inf);
+        }
+        var nm = h('span', { class: 'hint lname' });
+        var inp = h('input', { class: 'input', type: 'url', inputmode: 'url', placeholder: 'instagram.com/kullanici', maxlength: '200', autocapitalize: 'none', spellcheck: 'false', 'aria-label': 'Bağlantı ' + (i + 1), value: v });
+        inp.addEventListener('input', function () { vals[i] = inp.value; paint(); });
+        var row = h('div', { class: 'lrow' }, logoHost, h('div', { class: 'lcol' }, inp, nm), h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Kaldır', onclick: function () { vals.splice(i, 1); draw(); } }, icon('x')));
+        paint(); return row;
+      }));
+      addB.hidden = vals.length >= 6;
+    }
+    draw();
+    return { el: h('div', { class: 'field' }, h('label', null, 'Bağlantılar'), host, addB, h('span', { class: 'hint' }, 'En fazla 6. Instagram, TikTok, YouTube, Telegram, GitHub… logosunu otomatik bulurum.')),
+      get: function () { return vals.map(normLink).filter(Boolean).filter(function (x, i, a) { return a.indexOf(x) === i; }).slice(0, 6); } };
   }
 
   /* ---- 3D zıplayan küp ---- */
@@ -1759,7 +1851,7 @@
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.0938';
+  var APP_VERSION = '2026.11.05.0946';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {

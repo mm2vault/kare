@@ -662,3 +662,18 @@ body.in-chat #ann { display: none; }
 .apkcard.going { --t: .75s; }
 @media (prefers-reduced-motion: reduce) { .bouncer, .cube, .cshadow, .cring, .cdust, .glow, .cf::after { animation: none; } .bouncer { transform: translateY(calc(var(--hop) * .5)); } .cube { transform: rotateX(-26deg) rotateY(30deg); } }
 [data-motion="off"] .bouncer, [data-motion="off"] .cube, [data-motion="off"] .cshadow, [data-motion="off"] .cring, [data-motion="off"] .cdust, [data-motion="off"] .glow, [data-motion="off"] .cf::after { animation: none; }
+
+/* ===== v13: profil bağlantıları ===== */
+.blogo { --bc: #667085; --bs: 30px; width: var(--bs); height: var(--bs); flex: none; border-radius: calc(var(--bs) * .3); background: var(--bc); display: grid; place-items: center; color: #fff; }
+.blogo i { width: 58%; height: 58%; background: #fff; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; display: block; }
+.blogo svg { width: 58%; height: 58%; }
+.blogo.empty { background: var(--surface-2); color: var(--muted, #667); }
+.plinks { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.plink { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; max-width: 100%; transition: transform .15s, box-shadow .15s; }
+.plink:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+.plink span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledit { display: flex; flex-direction: column; gap: 10px; }
+.lrow { display: flex; align-items: flex-start; gap: 10px; }
+.lrow .lhost { padding-top: 4px; }
+.lcol { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.lname.bad { color: #d6244a; }
