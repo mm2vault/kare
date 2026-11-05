@@ -1739,8 +1739,23 @@
     view.replaceChildren(secPage('Profil', [form]));
   }
 
+  /* ---- 3D zıplayan küp ---- */
+  function cubeEl(size) {
+    var faces = ['front', 'back', 'right', 'left', 'top', 'bottom'].map(function (f) { return h('i', { class: 'cf ' + f }, h('b', null, 'K')); });
+    return h('span', { class: 'cubewrap', style: { '--cs': (size || 64) + 'px' }, 'aria-hidden': 'true' },
+      h('span', { class: 'bouncer' }, h('span', { class: 'cube' }, faces)), h('span', { class: 'cshadow' }));
+  }
+  function apkCard() {
+    var card = h('div', { class: 'apkcard' });
+    var btn = h('a', { class: 'btn', href: APK_URL, rel: 'noopener', onclick: function () {
+      card.classList.add('going'); btn.lastChild.textContent = 'İndiriliyor…';
+      setTimeout(function () { card.classList.remove('going'); btn.lastChild.textContent = 'Tekrar indir'; }, 4000);
+    } }, icon('download'), h('span', null, 'Kare’yi indir'));
+    card.append(cubeEl(64), h('div', { class: 'apkt' }, h('b', null, 'Kare Android uygulaması'), h('span', { class: 'hint' }, 'Ana ekrana gelir, tam ekran açılır. Site güncellemeleri otomatik gelir.'), btn));
+    return card;
+  }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.0929';
+  var APP_VERSION = '2026.11.05.0935';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
@@ -1999,7 +2014,7 @@
           } }, 'Güncellemeleri denetle');
           return b;
         })()),
-        setRow('Android uygulaması (APK)', 'Android telefon için indir. Site güncellemeleri uygulamaya otomatik gelir.', h('a', { class: 'btn small', href: APK_URL, rel: 'noopener' }, icon('download'), 'İndir')),
+        apkCard(),
         setRow('Uygulamayı yenile', 'Bir şey bozuk görünüyorsa eski önbelleği temizler', h('button', { class: 'btn quiet small', type: 'button', onclick: async function () {
           try {
             if ('caches' in window) { var ks = await caches.keys(); await Promise.all(ks.map(function (k) { return caches.delete(k); })); }

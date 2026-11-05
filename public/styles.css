@@ -624,3 +624,33 @@ body.in-chat #ann { display: none; }
 .updbar span { flex: 1; font-weight: 600; }
 .updbar .btn { background: var(--accent-ink); color: var(--accent); }
 .updbar .icon-btn { color: inherit; }
+
+/* ===== v12: 3D küp ===== */
+.cubewrap { --cs: 64px; position: relative; display: inline-block; width: calc(var(--cs) * 1.35); height: calc(var(--cs) * 1.9); flex: none; perspective: 500px; }
+.bouncer { position: absolute; left: calc(var(--cs) * .175); top: 0; width: var(--cs); height: var(--cs); transform-style: preserve-3d; animation: cbounce 1.1s cubic-bezier(.3,0,.4,1) infinite; }
+.cube { position: absolute; inset: 0; transform-style: preserve-3d; animation: cspin 4.4s linear infinite; }
+.cf { position: absolute; inset: 0; display: grid; place-items: center; border-radius: calc(var(--cs) * .14); background: linear-gradient(135deg, #3a56ff, #1c2fc0); border: 2px solid rgba(255,255,255,.35); backface-visibility: hidden; box-shadow: inset 0 0 18px rgba(255,255,255,.18); }
+.cf b { font: 800 calc(var(--cs) * .5)/1 var(--font-display, inherit); color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.3); }
+.cf.front { transform: translateZ(calc(var(--cs) / 2)); }
+.cf.back { transform: rotateY(180deg) translateZ(calc(var(--cs) / 2)); }
+.cf.right { transform: rotateY(90deg) translateZ(calc(var(--cs) / 2)); background: linear-gradient(135deg, #2b44f0, #19b8d6); }
+.cf.left { transform: rotateY(-90deg) translateZ(calc(var(--cs) / 2)); background: linear-gradient(135deg, #2b44f0, #7c3aed); }
+.cf.top { transform: rotateX(90deg) translateZ(calc(var(--cs) / 2)); background: linear-gradient(135deg, #6d82ff, #3a56ff); }
+.cf.bottom { transform: rotateX(-90deg) translateZ(calc(var(--cs) / 2)); background: #1c2fc0; }
+.cshadow { position: absolute; left: 18%; right: 18%; bottom: 0; height: calc(var(--cs) * .16); border-radius: 50%; background: rgba(0,0,0,.28); filter: blur(4px); animation: cshadow 1.1s cubic-bezier(.3,0,.4,1) infinite; }
+@keyframes cbounce {
+  0% { transform: translateY(calc(var(--cs) * 0.75)) scale(1.18, .78); }
+  12% { transform: translateY(calc(var(--cs) * 0.75)) scale(1.18, .78); }
+  50% { transform: translateY(0) scale(.94, 1.08); }
+  88% { transform: translateY(calc(var(--cs) * 0.75)) scale(1.02, .98); }
+  100% { transform: translateY(calc(var(--cs) * 0.75)) scale(1.18, .78); }
+}
+@keyframes cspin { from { transform: rotateX(-24deg) rotateY(0deg); } to { transform: rotateX(-24deg) rotateY(360deg); } }
+@keyframes cshadow { 0%, 12%, 100% { transform: scale(1); opacity: .6; } 50% { transform: scale(.55); opacity: .25; } }
+.apkcard { display: flex; align-items: center; gap: 16px; margin: 18px 0; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: var(--surface); }
+.apkt { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+.apkcard.going .bouncer { animation-duration: .5s; }
+.apkcard.going .cshadow { animation-duration: .5s; }
+.apkcard.going .cube { animation-duration: 1.4s; }
+@media (prefers-reduced-motion: reduce) { .bouncer, .cube, .cshadow { animation: none; } .cube { transform: rotateX(-24deg) rotateY(30deg); } }
+[data-motion="off"] .bouncer, [data-motion="off"] .cube, [data-motion="off"] .cshadow { animation: none; }
