@@ -31,6 +31,11 @@ jobs:
             cp ../public/icons/icon-192.png $d/ic_launcher_round.png
             cp ../public/icons/icon-192.png $d/ic_launcher_foreground.png
           done
+      - name: Permissions
+        working-directory: android
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <application#' $M
       - name: Build debug APK
         working-directory: android/android
         run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon

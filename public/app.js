@@ -89,6 +89,7 @@
     check: '<path d="M4 12.5l5 5L20 6.5"/>',
     poll: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    pause: '<path d="M8 5v14M16 5v14"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     download: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>'
   };
@@ -2234,18 +2235,83 @@
   }
 
   var MEDIA_PLACE = { image: '📷 Fotoğraf', video: '🎬 Video', audio: '🎤 Sesli mesaj' };
+  function fmtT(sec) { sec = Math.max(0, Math.round(sec || 0)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+  var curVoice = null;
+  function voiceEl(src, hint) {
+    var a = new Audio(); a.preload = 'metadata'; a.src = src;
+    var N = 30, seed = 0;
+    for (var i = 0; i < src.length; i++) seed = (seed * 31 + src.charCodeAt(i)) >>> 0;
+    var bars = [];
+    for (var k = 0; k < N; k++) { seed = (seed * 1103515245 + 12345) >>> 0; bars.push(h('i', { style: { height: (6 + (seed >> 8) % 18) + 'px' } })); }
+    var wave = h('span', { class: 'vwave' }, bars);
+    var btn = h('button', { class: 'vbtn', type: 'button', 'aria-label': 'Oynat' }, icon('play'));
+    var time = h('span', { class: 'mono vt' }, fmtT(hint));
+    var spd = h('button', { class: 'vspd', type: 'button', 'aria-label': 'Hız' }, '1x');
+    function dur() { return isFinite(a.duration) && a.duration > 0 ? a.duration : (hint || 0); }
+    function paint() {
+      var r = dur() ? a.currentTime / dur() : 0;
+      bars.forEach(function (b, i) { b.classList.toggle('on', i < Math.round(r * N)); });
+      time.textContent = fmtT(a.paused && a.currentTime === 0 ? dur() : a.currentTime);
+    }
+    function setIcon(playing) { btn.replaceChildren(icon(playing ? 'pause' : 'play')); btn.setAttribute('aria-label', playing ? 'Duraklat' : 'Oynat'); }
+    a.addEventListener('timeupdate', paint);
+    a.addEventListener('loadedmetadata', paint);
+    a.addEventListener('ended', function () { a.currentTime = 0; setIcon(false); paint(); });
+    a.addEventListener('pause', function () { setIcon(false); });
+    a.addEventListener('play', function () { setIcon(true); });
+    a.addEventListener('error', function () { time.textContent = 'oynatılamadı'; });
+    btn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (a.paused) { if (curVoice && curVoice !== a) curVoice.pause(); curVoice = a; a.play().catch(function () { toast('Ses oynatılamadı.', true); }); }
+      else a.pause();
+    });
+    wave.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var r = wave.getBoundingClientRect(); if (!dur()) return;
+      a.currentTime = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * dur(); paint();
+    });
+    spd.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var rates = [1, 1.5, 2], i = (rates.indexOf(a.playbackRate) + 1) % rates.length;
+      a.playbackRate = rates[i]; spd.textContent = rates[i] + 'x';
+    });
+    return h('span', { class: 'voice' }, btn, wave, h('span', { class: 'vmeta' }, time, spd));
+  }
+  function openLightbox(src) {
+    var o = h('div', { class: 'lightbox', role: 'dialog', 'aria-label': 'Fotoğraf' }, h('img', { src: src, alt: 'Fotoğraf' }), h('button', { class: 'lbx', type: 'button', 'aria-label': 'Kapat' }, icon('x')));
+    function close() { o.remove(); document.removeEventListener('keydown', k); }
+    function k(e) { if (e.key === 'Escape') close(); }
+    o.addEventListener('click', close); document.addEventListener('keydown', k);
+    document.body.append(o);
+  }
+  function linkify(text) {
+    var frag = document.createDocumentFragment(), re = /https?:\/\/[^\s<]+/g, last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      frag.append(h('a', { class: 'tag', href: m[0], target: '_blank', rel: 'noopener noreferrer' }, m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    return frag;
+  }
+  var EMO_ONLY = /^(?:\p{Extended_Pictographic}|‍|️|\s){1,14}$/u;
   function msgBody(m) {
     var box = h('span', { class: 'mbody' });
+    var voice = m.media_type === 'audio';
     if (m.media_path) {
       var u = mediaUrl(m.media_path);
-      if (m.media_type === 'image') box.append(h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, h('img', { class: 'mimg', src: u, alt: 'Fotoğraf', loading: 'lazy' })));
+      if (m.media_type === 'image') box.append(h('img', { class: 'mimg', src: u, alt: 'Fotoğraf', loading: 'lazy', onclick: function (ev) { ev.stopPropagation(); openLightbox(u); } }));
       else if (m.media_type === 'video') box.append(h('video', { class: 'mimg', src: u, controls: true, playsinline: true, preload: 'metadata' }));
-      else box.append(h('audio', { class: 'maud', src: u, controls: true, preload: 'metadata' }));
+      else { var dm = /(\d+):(\d{2})/.exec(m.body || ''); box.append(voiceEl(u, dm ? +dm[1] * 60 + +dm[2] : 0)); }
     }
-    if (m.body && m.body !== MEDIA_PLACE[m.media_type]) {
+    if (m.body && !voice && m.body !== MEDIA_PLACE[m.media_type]) {
       var pm = POST_RE.exec(m.body);
       var txt = pm ? m.body.replace(/\S*#\/p\/[0-9a-f-]{36}\S*/i, '').trim() : m.body;
-      if (txt) box.append(h('span', null, txt));
+      if (txt) {
+        var big = txt.length <= 14 && EMO_ONLY.test(txt);
+        box.append(h('span', { class: big ? 'bigemo' : null }, big ? txt : linkify(txt)));
+        if (big) box.classList.add('onlyemo');
+      }
       if (pm) box.append(postPreview(pm[1]));
     }
     return box;
@@ -2263,9 +2329,9 @@
     var file = h('input', { class: 'sr', id: 'm-file', type: 'file', accept: 'image/*,video/mp4,video/webm,video/quicktime' });
     var attach = h('label', { class: 'icon-btn cbtn', for: 'm-file', 'aria-label': 'Foto veya video ekle', role: 'button', tabindex: '0' }, icon('image'));
     var send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Gönder' }, icon('send'));
-    var canRec = !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    var canRec = !!((window.AudioContext || window.webkitAudioContext) && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
     var mic = canRec ? h('button', { class: 'icon-btn cbtn', type: 'button', 'aria-label': 'Sesli mesaj kaydet' }, icon('mic')) : null;
-    var recBar = h('div', { class: 'recbar', hidden: true }, h('span', { class: 'recdot' }), h('span', { class: 'mono rect' }, '0:00'),
+    var recBar = h('div', { class: 'recbar', hidden: true }, h('span', { class: 'recdot' }), h('span', { class: 'mono rect' }, '0:00'), h('span', { class: 'recwave' }),
       h('button', { class: 'btn quiet small', type: 'button', id: 'rec-x' }, 'İptal'));
     var form = h('form', { class: 'cform chatform' }, attach, file, input, recBar, mic, send);
     var busy = false;
@@ -2296,50 +2362,88 @@
       } catch (e) { toast(friendlyError(e), true); }
       setBusy(false);
     });
-    var recorder = null, chunks = [], stream = null, timer = null, t0 = 0, cancelled = false;
-    function stopStream() { if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    var rec = null, timer = null, t0 = 0;
     function resetRecUi() {
       clearInterval(timer); recBar.hidden = true; input.hidden = false; attach.hidden = false;
       if (mic) { mic.hidden = false; mic.classList.remove('on'); }
     }
-    function finishRec(send_) {
-      if (!recorder) return;
-      cancelled = !send_;
-      try { recorder.stop(); } catch (e) {}
+    async function startWav() {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      var AC = window.AudioContext || window.webkitAudioContext;
+      var ctx = new AC();
+      if (ctx.resume) await ctx.resume();
+      var src = ctx.createMediaStreamSource(stream);
+      var proc = ctx.createScriptProcessor(4096, 1, 1);
+      var bufs = [], level = 0, rate = ctx.sampleRate;
+      proc.onaudioprocess = function (e) {
+        var d = e.inputBuffer.getChannelData(0), sum = 0;
+        bufs.push(new Float32Array(d));
+        for (var i = 0; i < d.length; i += 4) sum += d[i] * d[i];
+        level = Math.sqrt(sum / (d.length / 4));
+      };
+      src.connect(proc); proc.connect(ctx.destination);
+      return {
+        level: function () { return level; },
+        stop: function () {
+          try { proc.disconnect(); src.disconnect(); } catch (e) {}
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          try { ctx.close(); } catch (e) {}
+          return encodeWav(bufs, rate);
+        },
+        abort: function () { try { proc.disconnect(); src.disconnect(); } catch (e) {} stream.getTracks().forEach(function (t) { t.stop(); }); try { ctx.close(); } catch (e) {} }
+      };
+    }
+    function encodeWav(bufs, rate) {
+      var n = 0; bufs.forEach(function (b) { n += b.length; });
+      var all = new Float32Array(n), o = 0;
+      bufs.forEach(function (b) { all.set(b, o); o += b.length; });
+      var OUT = 16000, ratio = rate / OUT, len = Math.floor(n / ratio), pcm = new Int16Array(len);
+      for (var i = 0; i < len; i++) {
+        var from = Math.floor(i * ratio), to = Math.min(n, Math.floor((i + 1) * ratio)), sum = 0, c = 0;
+        for (var j = from; j < to; j++) { sum += all[j]; c++; }
+        var v = c ? sum / c : 0; v = Math.max(-1, Math.min(1, v * 1.6));
+        pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+      }
+      var buf = new ArrayBuffer(44 + len * 2), dv = new DataView(buf);
+      function str(off, t) { for (var k = 0; k < t.length; k++) dv.setUint8(off + k, t.charCodeAt(k)); }
+      str(0, 'RIFF'); dv.setUint32(4, 36 + len * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+      dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+      dv.setUint32(24, OUT, true); dv.setUint32(28, OUT * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+      str(36, 'data'); dv.setUint32(40, len * 2, true);
+      for (var q = 0; q < len; q++) dv.setInt16(44 + q * 2, pcm[q], true);
+      return { blob: new Blob([buf], { type: 'audio/wav' }), secs: len / OUT };
+    }
+    async function finishRec(send_) {
+      if (!rec) return;
+      var r = rec; rec = null; resetRecUi();
+      if (!send_) { r.abort(); return; }
+      var out = r.stop();
+      if (out.secs < 0.7) { toast('Kayıt çok kısa.'); return; }
+      setBusy(true);
+      try {
+        var sec = Math.round(out.secs);
+        await onSend('🎤 ' + Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'), { blob: out.blob, type: 'audio', contentType: 'audio/wav', ext: 'wav' });
+      } catch (e) { toast(friendlyError(e), true); }
+      setBusy(false);
     }
     if (mic) mic.addEventListener('click', async function () {
-      if (recorder) { finishRec(true); return; }
-      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-      catch (e) { toast('Mikrofon izni verilmedi.', true); return; }
-      var types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
-      var mt = types.find(function (t) { return MediaRecorder.isTypeSupported(t); }) || '';
-      chunks = []; cancelled = false;
-      recorder = mt ? new MediaRecorder(stream, { mimeType: mt }) : new MediaRecorder(stream);
-      recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-      recorder.onstop = async function () {
-        var type = (recorder.mimeType || mt || 'audio/webm').split(';')[0];
-        var dur = Date.now() - t0;
-        recorder = null; stopStream(); resetRecUi();
-        if (cancelled || dur < 600 || !chunks.length) return;
-        var blob = new Blob(chunks, { type: type });
-        if (blob.size > 8 * 1024 * 1024) { toast('Ses kaydı çok uzun.', true); return; }
-        setBusy(true);
-        try { await onSend('', { blob: blob, type: 'audio', contentType: type, ext: type.indexOf('mp4') >= 0 ? 'm4a' : type.indexOf('ogg') >= 0 ? 'ogg' : 'webm' }); }
-        catch (e) { toast(friendlyError(e), true); }
-        setBusy(false);
-      };
-      recorder.start();
+      if (rec) { finishRec(true); return; }
+      try { rec = await startWav(); }
+      catch (e) { rec = null; toast('Mikrofon izni verilmedi.', true); return; }
       t0 = Date.now();
       input.hidden = true; attach.hidden = true; recBar.hidden = false; mic.classList.add('on');
-      var rt = $('.rect', recBar);
+      var rt = $('.rect', recBar), wave = $('.recwave', recBar), hist = [];
       timer = setInterval(function () {
+        if (!rec) return;
         var s = Math.floor((Date.now() - t0) / 1000);
         rt.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-        if (s >= 120) finishRec(true);
-      }, 250);
+        hist.push(Math.min(1, rec.level() * 6)); if (hist.length > 28) hist.shift();
+        wave.replaceChildren.apply(wave, hist.map(function (v) { return h('i', { style: { height: Math.max(3, Math.round(v * 24)) + 'px' } }); }));
+        if (s >= 180) finishRec(true);
+      }, 90);
     });
     $('#rec-x', recBar).addEventListener('click', function () { finishRec(false); });
-    form.cleanup = function () { cancelled = true; if (recorder) { try { recorder.stop(); } catch (e) {} } stopStream(); clearInterval(timer); };
+    form.cleanup = function () { if (rec) { rec.abort(); rec = null; } clearInterval(timer); };
     return form;
   }
 
@@ -2369,7 +2473,9 @@
       tch.send({ type: 'broadcast', event: 'typing', payload: { uid: state.me.id, name: nameOf(state.me) } });
     });
     var head = spec.head(typingEl);
-    view.replaceChildren(h('div', { class: 'chat page-in' }, head, box, form));
+    var fab = h('button', { class: 'tobottom', type: 'button', hidden: true, 'aria-label': 'En alta git', onclick: function () { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); } }, icon('back'));
+    box.addEventListener('scroll', function () { fab.hidden = box.scrollHeight - box.scrollTop - box.clientHeight < 300; });
+    view.replaceChildren(h('div', { class: 'chat page-in' }, head, box, fab, form));
     var byId = {}, els = {}, rx = {}, lastDay = '', replyTo = null;
     var EMO = ['❤️', '😂', '😮', '😢', '🔥', '👍'];
     var kind = spec.isGroup ? 'group' : 'dm';

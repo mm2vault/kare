@@ -594,3 +594,27 @@ body.in-chat #ann { display: none; }
 .sheet button { display: flex; align-items: center; gap: 12px; padding: 12px 6px; background: none; border: 0; border-top: 1px solid var(--line); color: var(--text); font-size: 16px; text-align: left; }
 .sheet button.danger { color: #d6244a; }
 .sheet svg { width: 20px; height: 20px; }
+
+/* ===== v10: sesli mesaj, lightbox ===== */
+.chat { position: relative; }
+.voice { display: flex; align-items: center; gap: 10px; min-width: 210px; }
+.vbtn { flex: none; width: 38px; height: 38px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); padding: 0; }
+.bub.mine .vbtn { background: var(--accent-ink); color: var(--accent); }
+.vbtn svg { width: 18px; height: 18px; }
+.vwave { flex: 1; display: flex; align-items: center; gap: 2px; height: 28px; cursor: pointer; }
+.vwave i { flex: 1; min-width: 2px; border-radius: 2px; background: currentColor; opacity: .3; transition: opacity .15s; }
+.vwave i.on { opacity: 1; }
+.vmeta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.vt { font: 400 11px var(--font-mono); opacity: .8; }
+.vspd { border: 0; border-radius: 999px; padding: 1px 7px; font-size: 11px; background: rgba(127,127,127,.25); color: inherit; }
+.recwave { flex: 1; display: flex; align-items: center; gap: 2px; height: 26px; overflow: hidden; justify-content: flex-end; }
+.recwave i { width: 3px; border-radius: 2px; background: #E0245E; flex: none; }
+.bigemo { font-size: 42px; line-height: 1.1; }
+.bub:has(.onlyemo) { background: none; border-color: transparent; color: inherit; }
+.mimg { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.92); display: grid; place-items: center; animation: fade .2s ease both; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lbx { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(255,255,255,.18); color: #fff; display: grid; place-items: center; }
+.tobottom { position: absolute; right: 14px; bottom: 84px; z-index: 5; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--text); box-shadow: var(--shadow); display: grid; place-items: center; padding: 0; }
+.tobottom[hidden] { display: none; }
+.tobottom svg { transform: rotate(-90deg); width: 20px; height: 20px; }
