@@ -1742,8 +1742,12 @@
   /* ---- 3D zıplayan küp ---- */
   function cubeEl(size) {
     var faces = ['front', 'back', 'right', 'left', 'top', 'bottom'].map(function (f) { return h('i', { class: 'cf ' + f }, h('b', null, 'K')); });
+    var dust = [[-46, -10], [-30, -26], [-14, -34], [14, -34], [30, -26], [46, -10]].map(function (d, i) {
+      return h('i', { class: 'cdust', style: { '--dx': d[0] + 'px', '--dy': d[1] + 'px', marginLeft: (i - 3) * 4 + 'px' } });
+    });
     return h('span', { class: 'cubewrap', style: { '--cs': (size || 64) + 'px' }, 'aria-hidden': 'true' },
-      h('span', { class: 'bouncer' }, h('span', { class: 'cube' }, faces)), h('span', { class: 'cshadow' }));
+      h('span', { class: 'glow' }), h('span', { class: 'cshadow' }), h('span', { class: 'cring' }), dust,
+      h('span', { class: 'bouncer' }, h('span', { class: 'cube' }, faces)));
   }
   function apkCard() {
     var card = h('div', { class: 'apkcard' });
@@ -1751,11 +1755,11 @@
       card.classList.add('going'); btn.lastChild.textContent = 'İndiriliyor…';
       setTimeout(function () { card.classList.remove('going'); btn.lastChild.textContent = 'Tekrar indir'; }, 4000);
     } }, icon('download'), h('span', null, 'Kare’yi indir'));
-    card.append(cubeEl(64), h('div', { class: 'apkt' }, h('b', null, 'Kare Android uygulaması'), h('span', { class: 'hint' }, 'Ana ekrana gelir, tam ekran açılır. Site güncellemeleri otomatik gelir.'), btn));
+    card.append(cubeEl(72), h('div', { class: 'apkt' }, h('b', null, 'Kare Android uygulaması'), h('span', { class: 'hint' }, 'Ana ekrana gelir, tam ekran açılır. Site güncellemeleri otomatik gelir.'), btn));
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.0935';
+  var APP_VERSION = '2026.11.05.0938';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
