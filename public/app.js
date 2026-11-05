@@ -1947,7 +1947,7 @@
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.0957';
+  var APP_VERSION = '2026.11.05.1001';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
@@ -2433,53 +2433,104 @@
   }
 
   var NOTIF_TEXT = { like: 'gönderini beğendi', comment: 'gönderine yorum yaptı', repost: 'gönderini repost etti', follow: 'seni takip etmeye başladı', mention: 'seni etiketledi', request: 'seni takip etmek istiyor', accept: 'takip isteğini kabul etti' };
+  var NGROUP = { like: 'like', repost: 'like', comment: 'comment', follow: 'follow', request: 'follow', accept: 'follow', mention: 'mention' };
+  var NFILTERS = [['all', 'Tümü'], ['like', 'Beğeni'], ['comment', 'Yorum'], ['follow', 'Takip'], ['mention', 'Etiket']];
+  var NBADGE = { like: ['heart', '#E0245E'], repost: ['repeat', '#118A5B'], comment: ['comment', '#2B44F0'], follow: ['user', '#7C3AED'], request: ['user', '#7C3AED'], accept: ['user', '#118A5B'], mention: [null, '#D9570B'] };
+  function dayBucket(t) {
+    var d = new Date(t), n = new Date(), start = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(), x = d.getTime();
+    if (x >= start) return 'Bugün';
+    if (x >= start - 864e5) return 'Dün';
+    if (x >= start - 6 * 864e5) return 'Bu hafta';
+    return 'Daha eski';
+  }
   async function notificationsPage(tok) {
     var view = $('#view');
     if (!state.me) { view.replaceChildren(loginPrompt('Bildirimler için giriş yap', 'Beğeniler, yorumlar ve yeni takipçiler burada görünür.')); return; }
-    var list = h('div', { class: 'ulist' }, h('div', { class: 'sk', style: { height: '120px' } }));
-    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '14px' } }, 'Bildirimler'), list));
-    async function load() {
-      var r = await sb.from('notifications').select('id,type,post_id,created_at,read_at,actor:profiles!notifications_actor_id_fkey(' + PROFILE_SEL + '),post:posts!notifications_post_id_fkey(id,media_path,media_type)').eq('user_id', state.me.id).order('created_at', { ascending: false }).limit(60);
-      if (tok !== routeTok) return;
-      if (r.error) { list.replaceChildren(emptyState('Yüklenemedi', friendlyError(r.error))); return; }
-      if (!r.data.length) {
-        list.replaceChildren(emptyState('Henüz bildirim yok', 'Biri seni takip edince, gönderini beğenince ya da yorum yapınca burada görünür.'));
+    var filter = 'all', rows = [], fresh = new Set();
+    var list = h('div', { class: 'nlist' }, h('div', { class: 'sk', style: { height: '120px' } }));
+    var chips = h('div', { class: 'chips nchips', role: 'tablist' });
+    function paintChips() {
+      chips.replaceChildren.apply(chips, NFILTERS.map(function (f) {
+        var n = f[0] === 'all' ? 0 : rows.filter(function (r) { return NGROUP[r.type] === f[0] && fresh.has(r.id); }).length;
+        return h('button', { type: 'button', role: 'tab', class: 'chip' + (filter === f[0] ? ' on' : ''), 'aria-selected': filter === f[0] ? 'true' : 'false', onclick: function () { filter = f[0]; paintChips(); draw(); } }, f[1], n ? h('span', { class: 'cdot' }, String(n)) : null);
+      }));
+    }
+    view.replaceChildren(h('div', { class: 'page-in' }, h('h1', { style: { fontSize: '30px', marginBottom: '12px' } }, 'Bildirimler'), chips, list));
+    function textFor(g) {
+      var names = g.actors.map(function (a) { return a.username; });
+      var who = names.length === 1 ? names[0] : names.length === 2 ? names[0] + ' ve ' + names[1] : names[0] + ', ' + names[1] + ' ve ' + (names.length - 2) + ' kişi';
+      return [h('b', null, who), ' ' + (NOTIF_TEXT[g.type] || '')];
+    }
+    function group(items) {
+      var out = [];
+      items.forEach(function (n) {
+        var mergeable = (n.type === 'like' || n.type === 'repost') && n.post_id;
+        var last = mergeable ? out.find(function (g) { return g.type === n.type && g.post_id === n.post_id && dayBucket(g.at) === dayBucket(n.created_at); }) : null;
+        if (last) {
+          if (!last.actors.some(function (a) { return a.id === n.actor.id; })) last.actors.push(n.actor);
+          last.ids.push(n.id); if (fresh.has(n.id)) last.fresh = true;
+          return;
+        }
+        out.push({ type: n.type, post_id: n.post_id, post: n.post, at: n.created_at, actors: [n.actor], ids: [n.id], fresh: fresh.has(n.id), src: n });
+      });
+      return out;
+    }
+    function draw() {
+      var items = rows.filter(function (n) { return n.actor && !hidden(n.actor.id) && (filter === 'all' || NGROUP[n.type] === filter); });
+      if (!items.length) {
+        list.replaceChildren(emptyState(filter === 'all' ? 'Henüz bildirim yok' : 'Bu türde bildirim yok', 'Biri seni takip edince, gönderini beğenince ya da yorum yapınca burada görünür.'));
         return;
       }
-      var hadUnread = r.data.some(function (n) { return !n.read_at; });
-      list.replaceChildren.apply(list, r.data.filter(function (n) { return n.actor && !hidden(n.actor.id); }).map(function (n, i) {
+      var nodes = [], lastB = '', i = 0;
+      group(items).forEach(function (g) {
+        var b = dayBucket(g.at);
+        if (b !== lastB) { lastB = b; nodes.push(h('h3', { class: 'nsec' }, b)); }
+        var a0 = g.actors[0], bd = NBADGE[g.type] || NBADGE.like;
+        var av = h('span', { class: 'navs' }, g.actors.slice(0, 3).map(function (a, k) { return h('span', { class: 'nav', style: { '--k': String(k) } }, avatarEl(a, g.actors.length > 1 ? 34 : 44)); }),
+          h('span', { class: 'nbadge', style: { background: bd[1] } }, bd[0] ? icon(bd[0]) : '@'));
         var thumb = null;
-        if (n.post) {
-          thumb = n.post.media_type === 'image'
-            ? h('img', { class: 'nthumb', src: mediaUrl(n.post.media_path), alt: '', loading: 'lazy' })
-            : h('span', { class: 'nthumb vid' }, icon('play'));
-        }
-        if (n.type === 'request') {
-          var rowR = h('div', { class: 'nrow enter unread', style: { '--i': String(Math.min(i, 12)) } },
-            h('a', { href: '#/u/' + encodeURIComponent(n.actor.username) }, avatarEl(n.actor, 44)),
-            h('span', { class: 'ntxt' }, h('span', null, h('b', null, n.actor.username), ' ' + NOTIF_TEXT.request), h('span', { class: 'mono' }, timeAgo(n.created_at))),
+        if (g.post) thumb = g.post.media_type === 'image' ? h('img', { class: 'nthumb', src: mediaUrl(g.post.media_path), alt: '', loading: 'lazy' }) : h('span', { class: 'nthumb vid' }, icon('play'));
+        var cls = 'nrow enter' + (g.fresh ? ' unread' : '');
+        var sty = { '--i': String(Math.min(i++, 12)) };
+        if (g.type === 'request') {
+          var rowR = h('div', { class: cls, style: sty }, h('a', { href: '#/u/' + encodeURIComponent(a0.username) }, av),
+            h('span', { class: 'ntxt' }, h('span', null, textFor(g)), h('span', { class: 'mono' }, timeAgo(g.at))),
             h('span', { class: 'prow' },
               h('button', { class: 'btn small', type: 'button', onclick: async function () {
-                var u = await sb.from('follows').update({ status: 'accepted' }).eq('follower_id', n.actor.id).eq('following_id', state.me.id);
+                var u = await sb.from('follows').update({ status: 'accepted' }).eq('follower_id', a0.id).eq('following_id', state.me.id);
                 if (u.error) { toast(friendlyError(u.error), true); return; }
-                rowR.remove(); toast('@' + n.actor.username + ' artık seni takip ediyor.');
+                rowR.remove(); toast('@' + a0.username + ' artık seni takip ediyor.');
               } }, 'Kabul'),
               h('button', { class: 'btn quiet small', type: 'button', onclick: async function () {
-                var d = await sb.from('follows').delete().match({ follower_id: n.actor.id, following_id: state.me.id });
+                var d = await sb.from('follows').delete().match({ follower_id: a0.id, following_id: state.me.id });
                 if (d.error) { toast(friendlyError(d.error), true); return; }
                 rowR.remove();
               } }, 'Reddet')));
-          return rowR;
+          nodes.push(rowR); return;
         }
-        return h('a', { class: 'nrow enter' + (n.read_at ? '' : ' unread'), style: { '--i': String(Math.min(i, 12)) }, href: n.post_id ? '#/p/' + n.post_id : '#/u/' + encodeURIComponent(n.actor.username) },
-          avatarEl(n.actor, 44),
-          h('span', { class: 'ntxt' }, h('span', null, h('b', null, n.actor.username), ' ' + (NOTIF_TEXT[n.type] || '')), h('span', { class: 'mono' }, timeAgo(n.created_at))),
-          thumb);
-      }));
-      if (hadUnread) {
+        var href = g.post_id ? '#/p/' + g.post_id : '#/u/' + encodeURIComponent(a0.username);
+        var tail = thumb;
+        if (g.type === 'follow' && g.actors.length === 1) tail = followButton(a0);
+        var row = h('a', { class: cls, style: sty, href: href }, av,
+          h('span', { class: 'ntxt' }, h('span', null, textFor(g)), h('span', { class: 'mono' }, timeAgo(g.at))), tail);
+        if (g.type === 'follow') row.addEventListener('click', function (ev) { if (ev.target.closest('button')) ev.preventDefault(); });
+        nodes.push(row);
+      });
+      list.replaceChildren.apply(list, nodes);
+    }
+    var firstLoad = true;
+    async function load() {
+      var r = await sb.from('notifications').select('id,type,post_id,created_at,read_at,actor:profiles!notifications_actor_id_fkey(' + PROFILE_SEL + '),post:posts!notifications_post_id_fkey(id,media_path,media_type)').eq('user_id', state.me.id).order('created_at', { ascending: false }).limit(120);
+      if (tok !== routeTok) return;
+      if (r.error) { list.replaceChildren(emptyState('Yüklenemedi', friendlyError(r.error))); return; }
+      rows = r.data || [];
+      rows.forEach(function (n) { if (!n.read_at) fresh.add(n.id); });
+      paintChips(); draw();
+      if (rows.some(function (n) { return !n.read_at; })) {
         await sb.from('notifications').update({ read_at: new Date().toISOString() }).eq('user_id', state.me.id).is('read_at', null);
         setBadge('notif', 0);
       }
+      firstLoad = false;
     }
     state.onNotif = load;
     load();
