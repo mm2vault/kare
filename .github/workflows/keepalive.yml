@@ -1,0 +1,10 @@
+name: Keep Kare awake
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS -m 30 -o /dev/null -w "%{http_code}\n" https://kare-flg0.onrender.com/version.json || true
