@@ -1,0 +1,8 @@
+{
+  "appId": "app.kare.social",
+  "appName": "Kare",
+  "webDir": "www",
+  "server": { "url": "https://kare-flg0.onrender.com", "cleartext": false },
+  "android": { "allowMixedContent": false },
+  "backgroundColor": "#2B44F0"
+}

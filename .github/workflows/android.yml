@@ -1,0 +1,45 @@
+name: Android APK
+on:
+  workflow_dispatch:
+  push:
+    paths: ['android/**', '.github/workflows/android.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Capacitor project
+        working-directory: android
+        run: |
+          npm init -y >/dev/null
+          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 --no-audit --no-fund
+          npx cap add android
+          npx cap sync android
+      - name: Icons and theme
+        working-directory: android
+        run: |
+          R=android/app/src/main/res
+          rm -rf $R/mipmap-anydpi-v26
+          for d in $R/mipmap-*; do
+            cp ../public/icons/icon-192.png $d/ic_launcher.png
+            cp ../public/icons/icon-192.png $d/ic_launcher_round.png
+            cp ../public/icons/icon-192.png $d/ic_launcher_foreground.png
+          done
+      - name: Build debug APK
+        working-directory: android/android
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - name: Rename
+        run: cp android/android/app/build/outputs/apk/debug/app-debug.apk Kare.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: Kare-apk, path: Kare.apk }
+      - name: Release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release delete apk-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create apk-latest Kare.apk --title "Kare Android" --notes "Kare Android APK. Install by opening this file on your phone."
