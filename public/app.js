@@ -86,6 +86,9 @@
     lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
     palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>',
     shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+    check: '<path d="M4 12.5l5 5L20 6.5"/>',
+    poll: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     download: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>'
   };
@@ -139,7 +142,7 @@
   function lock() { if (locks++ === 0) document.body.classList.add('locked'); }
   function unlock() { if (--locks <= 0) { locks = 0; document.body.classList.remove('locked'); } }
   var modals = [];
-  function modal(content, label) {
+  function modal(content, label, onClose) {
     var back = h('div', { class: 'modal-back', role: 'dialog', 'aria-modal': 'true', 'aria-label': label || 'Pencere' });
     var box = h('div', { class: 'modal' }, content);
     back.append(box);
@@ -148,6 +151,7 @@
     function close() {
       if (closed) return;
       closed = true;
+      if (onClose) { try { onClose(); } catch (e) {} }
       modals = modals.filter(function (m) { return m !== api; });
       back.classList.add('out');
       setTimeout(function () { back.remove(); }, 180);
@@ -450,6 +454,61 @@
   }
   function removeFile(path) { if (path) sb.storage.from(BUCKET).remove([path]).then(function () {}, function () {}); }
 
+  var TEXT_BG = [['#2B44F0', '#19B8D6'], ['#E0245E', '#FF8A5B'], ['#7C3AED', '#EC4899'], ['#118A5B', '#0E8FA6'], ['#111827', '#374151'], ['#D9570B', '#F5B301']];
+  function renderTextStory(text, bgi) {
+    var W = 1080, H = 1920;
+    var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var ctx = cv.getContext('2d');
+    var g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, TEXT_BG[bgi][0]); g.addColorStop(1, TEXT_BG[bgi][1]);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.07)';
+    for (var x = 0; x < W; x += 90) ctx.fillRect(x, 0, 4, H);
+    var size = 130, lines, lh;
+    var fam = '"Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif';
+    function wrap() {
+      ctx.font = '700 ' + size + 'px ' + fam; lh = size * 1.18; lines = [];
+      text.split('\n').forEach(function (para) {
+        var words = para.split(/\s+/).filter(Boolean), line = '';
+        if (!words.length) { lines.push(''); return; }
+        words.forEach(function (w) {
+          var t = line ? line + ' ' + w : w;
+          if (ctx.measureText(t).width > W - 200 && line) { lines.push(line); line = w; } else line = t;
+        });
+        lines.push(line);
+      });
+    }
+    wrap();
+    while (size > 44 && (lines.length * lh > H - 520 || lines.some(function (l) { return ctx.measureText(l).width > W - 200; }))) { size -= 6; wrap(); }
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 24;
+    var y0 = H / 2 - ((lines.length - 1) * lh) / 2;
+    lines.forEach(function (l, i) { ctx.fillText(l, W / 2, y0 + i * lh); });
+    return new Promise(function (res) { cv.toBlob(function (b) { res({ blob: b, type: 'image', contentType: 'image/jpeg', ext: 'jpg', w: W, h: H }); }, 'image/jpeg', 0.9); });
+  }
+  function textStoryModal(onDone) {
+    var bgi = 0;
+    var ta = h('textarea', { class: 'textarea', maxlength: '160', placeholder: 'Ne düşünüyorsun?', 'aria-label': 'Hikaye yazısı', rows: '3' });
+    var prev = h('div', { class: 'tprev' }, h('span', null, 'Ne düşünüyorsun?'));
+    var sw = h('div', { class: 'swatches' });
+    function paint() {
+      prev.style.background = 'linear-gradient(135deg,' + TEXT_BG[bgi][0] + ',' + TEXT_BG[bgi][1] + ')';
+      prev.firstChild.textContent = ta.value.trim() || 'Ne düşünüyorsun?';
+      sw.replaceChildren.apply(sw, TEXT_BG.map(function (c, i) {
+        return h('button', { type: 'button', class: 'swatch' + (i === bgi ? ' on' : ''), style: { background: 'linear-gradient(135deg,' + c[0] + ',' + c[1] + ')' }, 'aria-label': 'Renk ' + (i + 1), onclick: function () { bgi = i; paint(); } });
+      }));
+    }
+    ta.addEventListener('input', paint);
+    var ok = h('button', { class: 'btn', type: 'button', onclick: async function () {
+      var t = ta.value.trim(); if (!t) { toast('Bir şeyler yaz.', true); return; }
+      ok.disabled = true;
+      var prep = await renderTextStory(t, bgi);
+      mm.close(); onDone(prep);
+    } }, 'Ekle');
+    var mm = modal(h('div', { style: { display: 'contents' } }, h('h2', null, 'Yazı hikayesi'), prev, ta, sw,
+      h('div', { class: 'row' }, h('button', { class: 'btn quiet', type: 'button', onclick: function () { mm.close(); } }, 'Vazgeç'), ok)), 'Yazı hikayesi');
+    paint();
+  }
   var MAX_ITEMS = 10;
   function uploadModal(startKind) {
     if (!requireLogin()) return;
@@ -458,6 +517,14 @@
     var host = h('div', { style: { display: 'contents' } });
     var m = modal(host, 'Paylaş');
     var filterBar = h('div', { class: 'chips filters', hidden: true });
+    var pollQ = h('input', { class: 'input', type: 'text', maxlength: '80', placeholder: 'Soru, örn. Bu akşam sinema?', 'aria-label': 'Anket sorusu' });
+    var pollA = h('input', { class: 'input', type: 'text', maxlength: '30', placeholder: 'Evet', 'aria-label': 'Birinci seçenek' });
+    var pollB = h('input', { class: 'input', type: 'text', maxlength: '30', placeholder: 'Hayır', 'aria-label': 'İkinci seçenek' });
+    var pollBox = h('details', { class: 'pollbox', hidden: true }, h('summary', null, icon('poll'), 'Anket ekle (isteğe bağlı)'), pollQ, h('div', { class: 'prow' }, pollA, pollB));
+    var textBtn = h('button', { class: 'btn quiet small', type: 'button', hidden: true, onclick: function () { textStoryModal(function (prep) {
+      items.push({ prep: prep, file: null, filter: '', url: URL.createObjectURL(prep.blob) });
+      sel = items.length - 1; render();
+    }); } }, icon('edit'), 'Yazı hikayesi');
     var fileInput = h('input', { class: 'sr', id: 'u-file', type: 'file', multiple: true, accept: 'image/*,video/mp4,video/webm,video/quicktime' });
     var err = h('div', { class: 'hint bad', role: 'alert' });
     var caption = h('textarea', { class: 'textarea', id: 'u-cap', maxlength: '2000', placeholder: 'Bir şeyler yaz (isteğe bağlı)' });
@@ -475,6 +542,7 @@
       segPost.setAttribute('aria-pressed', k === 'post' ? 'true' : 'false');
       segStory.setAttribute('aria-pressed', k === 'story' ? 'true' : 'false');
       capLabel.textContent = k === 'story' ? 'Hikaye yazısı' : 'Açıklama';
+      pollBox.hidden = k !== 'story'; textBtn.hidden = k !== 'story';
       caption.maxLength = k === 'story' ? 140 : 2000;
       caption.placeholder = k === 'story' ? 'Kısa bir yazı (isteğe bağlı)' : 'Bir şeyler yaz (isteğe bağlı)';
       render();
@@ -503,7 +571,7 @@
     }
     function paintFilters() {
       var it = items[sel];
-      var show = FILTER_OK && it && it.prep.type === 'image' && it.prep.contentType !== 'image/gif' || (FILTER_OK && it && it.filter);
+      var show = FILTER_OK && it && it.file && it.prep.type === 'image' && it.prep.contentType !== 'image/gif';
       filterBar.hidden = !show;
       if (!show) return;
       filterBar.replaceChildren.apply(filterBar, FILTERS.map(function (f) {
@@ -555,8 +623,11 @@
         var cap = caption.value.trim() || null;
         if (kind === 'story') {
           var base = Date.now();
+          var pq = pollQ.value.trim();
           var rows = items.map(function (it, i) {
-            return { user_id: state.me.id, media_path: paths[i], media_type: it.prep.type, caption: cap, created_at: new Date(base + i * 1000).toISOString() };
+            var row = { user_id: state.me.id, media_path: paths[i], media_type: it.prep.type, caption: cap, created_at: new Date(base + i * 1000).toISOString() };
+            if (i === 0 && pq) { row.poll_q = pq; row.poll_a = pollA.value.trim() || 'Evet'; row.poll_b = pollB.value.trim() || 'Hayır'; }
+            return row;
           });
           var sr = await sb.from('stories').insert(rows);
           if (sr.error) throw sr.error;
@@ -583,7 +654,7 @@
     host.append(
       h('h2', null, 'Paylaş'),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Ne paylaşacaksın' }, segPost, segStory),
-      fileInput, dropEl, thumbs, filterBar, capField, prog, err,
+      fileInput, dropEl, h('div', { class: 'prow' }, textBtn), thumbs, filterBar, capField, pollBox, prog, err,
       h('p', { class: 'hint', style: { margin: 0 } }, 'Başkalarına ait ya da uygunsuz içerik paylaşma.'),
       h('div', { class: 'row' }, cancel, submit));
     setKind(kind);
@@ -779,6 +850,7 @@
     var repBtn = mk('repost', 'repeat', 'Repost');
     var favBtn = mk('fav', 'bookmark', 'Favorilere ekle');
     var comBtn = h('a', { class: 'act', href: '#/p/' + p.id, 'aria-label': 'Yorumlar' }, icon('comment'), h('span', { class: 'n' }));
+    var shBtn = h('button', { class: 'act', type: 'button', 'aria-label': 'Paylaş', onclick: function () { shareModal(p); } }, icon('send'));
     function paint() {
       [[likeBtn, st.liked, st.likes], [repBtn, st.rep, st.reposts], [favBtn, st.fav, 0]].forEach(function (x) {
         x[0].classList.toggle('on', x[1]);
@@ -786,6 +858,7 @@
         $('.n', x[0]).textContent = x[2] ? fmt(x[2]) : '';
       });
       $('.n', comBtn).textContent = st.comments ? fmt(st.comments) : '';
+      if (typeof likesLine !== 'undefined') { likesLine.hidden = !st.likes; likesLine.textContent = st.likes + ' beğeni'; }
     }
     async function toggle(table, btn, key, countKey) {
       if (!requireLogin()) return;
@@ -812,7 +885,9 @@
       toggle('reposts', repBtn, 'rep', 'reposts').then(function () { if (st.rep) toast('Profiline repost edildi.'); });
     });
     favBtn.addEventListener('click', function () { toggle('favorites', favBtn, 'fav', null).then(function () { if (st.fav) toast('Favorilere eklendi.'); }); });
-    card.append(h('div', { class: 'actions' }, likeBtn, comBtn, repBtn, h('span', { class: 'sp' }), favBtn));
+    card.append(h('div', { class: 'actions' }, likeBtn, comBtn, repBtn, shBtn, h('span', { class: 'sp' }), favBtn));
+    var likesLine = h('button', { class: 'likesline', type: 'button', onclick: function () { likersModal(p.id, st.likes); } });
+    card.append(likesLine);
     paint();
 
     var body = h('div', { class: 'card-body' });
@@ -823,6 +898,11 @@
       capEl = h('p', { class: 'caption' }, h('b', null, author.username || ''), rich(p.caption), p.edited_at ? h('span', { class: 'edited mono' }, ' (düzenlendi)') : null);
       body.prepend(capEl);
       if (!body.parentNode) card.append(body);
+      if (!opts.detail && p.caption.length > 140) {
+        capEl.classList.add('clamp');
+        var more = h('button', { class: 'more', type: 'button', onclick: function () { capEl.classList.remove('clamp'); more.remove(); } }, 'daha fazla');
+        capEl.append(' ', more);
+      }
     }
     function editCaption() {
       var ta = h('textarea', { class: 'textarea', maxlength: '2000', 'aria-label': 'Açıklama' });
@@ -846,6 +926,76 @@
     return card;
   }
 
+  function postUrl(id) { return location.origin + location.pathname + '#/p/' + id; }
+  var POST_RE = /#\/p\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+  var previewCache = {};
+  function postPreview(id) {
+    var box = h('a', { class: 'ppv', href: '#/p/' + id }, h('span', { class: 'ppv-t' }, 'Gönderi açılıyor…'));
+    if (!previewCache[id]) previewCache[id] = sb.from('posts').select('id,caption,media_path,media_type,author:profiles!posts_user_id_fkey(username,display_name)').eq('id', id).maybeSingle();
+    previewCache[id].then(function (r) {
+      var p = r.data;
+      if (!p) { box.replaceChildren(h('span', { class: 'ppv-t' }, 'Gönderi bulunamadı')); return; }
+      var th = p.media_type === 'image' ? h('img', { src: mediaUrl(p.media_path), alt: '', loading: 'lazy' }) : h('span', { class: 'ppv-v' }, icon('play'));
+      box.replaceChildren(th, h('span', { class: 'ppv-t' }, h('b', null, '@' + ((p.author && p.author.username) || '')), h('span', null, (p.caption || 'Gönderiyi gör').slice(0, 80))));
+    });
+    return box;
+  }
+  function likersModal(pid, total) {
+    var host = h('div', { class: 'ulist' }, h('div', { class: 'sk', style: { height: '90px' } }));
+    modal(h('div', { style: { display: 'contents' } }, h('h2', null, total + ' beğeni'), host), 'Beğenenler');
+    sb.from('likes').select('liker:profiles!likes_user_id_fkey(' + PROFILE_SEL + ')').eq('post_id', pid).order('created_at', { ascending: false }).limit(100).then(function (r) {
+      var rows = (r.data || []).map(function (x) { return x.liker; }).filter(function (u) { return u && !hidden(u.id); });
+      host.replaceChildren.apply(host, rows.length ? rows.map(function (u) {
+        return h('a', { class: 'urow', href: '#/u/' + encodeURIComponent(u.username), onclick: function () { closeAllModals(); } }, h('span', { class: 'who2' }, avatarEl(u, 38), h('span', null, h('b', null, nameOf(u)), h('em', null, '@' + u.username))));
+      }) : [h('p', { class: 'muted' }, 'Henüz beğeni yok.')]);
+    });
+  }
+  function closeAllModals() { modals.slice().forEach(function (m) { m.close(); }); }
+  function shareModal(p) {
+    var url = postUrl(p.id);
+    var text = ((p.author && p.author.username) ? '@' + p.author.username + ' Kare\'de paylaştı' : 'Kare gönderisi');
+    var sel = new Set(), targets = [], note = h('input', { class: 'input', type: 'text', maxlength: '300', placeholder: 'Mesaj ekle (isteğe bağlı)', 'aria-label': 'Not' });
+    var list = h('div', { class: 'shlist' });
+    var sendBtn = h('button', { class: 'btn', type: 'button', hidden: true }, 'Gönder');
+    function ext(label, ico, href) { return h('a', { class: 'shbtn', href: href, target: '_blank', rel: 'noopener noreferrer' }, h('span', { class: 'shi' }, icon(ico)), label); }
+    var quick = h('div', { class: 'shrow' },
+      h('button', { class: 'shbtn', type: 'button', onclick: function () { copyLink(p.id); } }, h('span', { class: 'shi' }, icon('link')), 'Kopyala'),
+      navigator.share ? h('button', { class: 'shbtn', type: 'button', onclick: function () { navigator.share({ title: 'Kare', text: text, url: url }).catch(function () {}); } }, h('span', { class: 'shi' }, icon('send')), 'Diğer') : null,
+      ext('WhatsApp', 'comment', 'https://wa.me/?text=' + encodeURIComponent(text + ' ' + url)),
+      ext('Telegram', 'send', 'https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent(text)));
+    function paint() {
+      list.replaceChildren.apply(list, targets.map(function (t) {
+        var on = sel.has(t.key);
+        return h('button', { type: 'button', class: 'shrowb' + (on ? ' on' : ''), onclick: function () { if (on) sel.delete(t.key); else sel.add(t.key); sendBtn.hidden = !sel.size; sendBtn.textContent = 'Gönder (' + sel.size + ')'; paint(); } },
+          t.user ? avatarEl(t.user, 36) : h('span', { class: 'gav' }, icon('users')), h('span', { class: 'sh-n' }, t.name), h('span', { class: 'chk' }, on ? icon('check') : ''));
+      }));
+      if (!targets.length) list.replaceChildren(h('p', { class: 'muted' }, state.me ? 'Takip ettiğin kimse yok.' : 'Arkadaşa göndermek için giriş yap.'));
+    }
+    var mm = modal(h('div', { style: { display: 'contents' } }, h('h2', null, 'Paylaş'), quick, state.me ? h('h3', { class: 'shh' }, 'Arkadaşlarına gönder') : null, state.me ? list : null, state.me ? note : null, state.me ? h('div', { class: 'row' }, sendBtn) : null), 'Paylaş');
+    paint();
+    if (!state.me) return;
+    Promise.all([
+      state.following.size ? sb.from('profiles').select(PROFILE_SEL).in('id', Array.from(state.following).slice(0, 100)) : Promise.resolve({ data: [] }),
+      sb.rpc('my_groups')
+    ]).then(function (res) {
+      var us = (res[0].data || []).filter(function (u) { return !hidden(u.id); }).map(function (u) { return { key: 'u:' + u.id, user: u, name: nameOf(u) }; });
+      var gs = ((res[1] && res[1].data) || []).map(function (g) { return { key: 'g:' + (g.group_id || g.id), name: g.name || g.title || 'Grup' }; });
+      targets = gs.concat(us); paint();
+    });
+    sendBtn.addEventListener('click', async function () {
+      sendBtn.disabled = true;
+      var body = (note.value.trim() ? note.value.trim() + '\n' : '') + url;
+      var jobs = Array.from(sel).map(function (k) {
+        var id = k.slice(2);
+        return k[0] === 'u'
+          ? sb.from('messages').insert({ sender_id: state.me.id, recipient_id: id, body: body })
+          : sb.from('group_messages').insert({ group_id: id, sender_id: state.me.id, body: body });
+      });
+      var rs = await Promise.all(jobs), bad = rs.find(function (r) { return r.error; });
+      if (bad) { toast(friendlyError(bad.error), true); sendBtn.disabled = false; return; }
+      toast('Gönderildi.'); mm.close();
+    });
+  }
   function copyLink(id) {
     var url = location.origin + location.pathname + '#/p/' + id;
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -893,7 +1043,7 @@
   }
   async function fetchStoryGroups() {
     var since = new Date(Date.now() - 864e5).toISOString();
-    var r = await sb.from('stories').select('id,user_id,media_path,media_type,caption,created_at,author:profiles!stories_user_id_fkey(' + PROFILE_SEL + ')').gte('created_at', since).order('created_at', { ascending: true }).limit(300);
+    var r = await sb.from('stories').select('id,user_id,media_path,media_type,caption,poll_q,poll_a,poll_b,created_at,author:profiles!stories_user_id_fkey(' + PROFILE_SEL + ')').gte('created_at', since).order('created_at', { ascending: true }).limit(300);
     if (r.error) return [];
     var map = {}, groups = [];
     r.data.forEach(function (s) {
@@ -1042,6 +1192,8 @@
         vid = h('video', { src: mediaUrl(cur.media_path), playsinline: true, preload: 'auto' });
         frame.append(vid);
       } else {
+        frame.style.setProperty('--bg', 'url("' + mediaUrl(cur.media_path) + '")');
+        frame.classList.add('bd');
         frame.append(h('img', { class: 'kb', src: mediaUrl(cur.media_path), alt: 'Hikaye' }));
       }
       var nx = g.stories[si + 1];
@@ -1077,6 +1229,53 @@
           if (await sendToOwner('↩️ Hikayene yanıt: ' + t, 'Yanıtın gönderildi')) { inp.value = ''; inp.blur(); }
         });
         frame.append(reply);
+      }
+
+      if (state.me && !own) { sb.from('story_views').upsert({ story_id: cur.id, viewer_id: state.me.id }, { onConflict: 'story_id,viewer_id', ignoreDuplicates: true }).then(function () {}, function () {}); }
+      if (cur.poll_q) {
+        var sid = cur.id, pbox = h('div', { class: 'spoll' }, h('b', null, cur.poll_q));
+        var optsHost = h('div', { class: 'popts' });
+        pbox.append(optsHost);
+        var paintPoll = function (rows, mine) {
+          var c = [0, 0]; rows.forEach(function (v) { c[v.choice]++; });
+          var tot = c[0] + c[1], showRes = mine !== null || own;
+          optsHost.replaceChildren.apply(optsHost, [cur.poll_a, cur.poll_b].map(function (lab, i) {
+            var pct = tot ? Math.round(c[i] * 100 / tot) : 0;
+            var b = h('button', { type: 'button', class: 'popt' + (mine === i ? ' mine' : ''), disabled: showRes,
+              onclick: async function () {
+                if (!requireLogin()) return;
+                rows = rows.concat([{ choice: i }]); paintPoll(rows, i);
+                var r = await sb.from('story_votes').insert({ story_id: sid, user_id: state.me.id, choice: i });
+                if (r.error) toast(friendlyError(r.error), true);
+              } },
+              showRes ? h('i', { style: { width: pct + '%' } }) : null,
+              h('span', null, lab), showRes ? h('em', null, pct + '%') : null);
+            return b;
+          }));
+        };
+        paintPoll([], null);
+        sb.from('story_votes').select('user_id,choice').eq('story_id', sid).then(function (r) {
+          if (r.error || cur.id !== sid) return;
+          var mine = null, rows = r.data || [];
+          rows.forEach(function (v) { if (state.me && v.user_id === state.me.id) mine = v.choice; });
+          paintPoll(rows, mine);
+        });
+        frame.append(pbox);
+      }
+      if (own) {
+        var vb = h('button', { class: 'sviews', type: 'button', 'aria-label': 'Görüntüleyenler', onclick: async function () {
+          pause();
+          var vr = await sb.from('story_views').select('viewer_id,created_at').eq('story_id', cur.id).order('created_at', { ascending: false }).limit(200);
+          var ids = (vr.data || []).map(function (v) { return v.viewer_id; });
+          var people = [];
+          if (ids.length) { var pr = await sb.from('profiles').select(PROFILE_SEL).in('id', ids); people = pr.data || []; }
+          var list = people.length ? people.map(function (u) {
+            return h('a', { class: 'urow', href: '#/u/' + encodeURIComponent(u.username), onclick: function () { vm.close(); close(); } }, avatarEl(u, 38), h('div', null, h('b', null, nameOf(u)), h('span', null, '@' + u.username)));
+          }) : [h('p', { class: 'muted' }, 'Henüz kimse görmedi.')];
+          var vm = modal(h('div', { style: { display: 'contents' } }, h('h2', null, ids.length + ' görüntüleme'), h('div', { class: 'ulist' }, list)), 'Görüntüleyenler', function () { if (!closed) play(); });
+        } }, icon('eye'), h('span', null, '…'));
+        sb.from('story_views').select('story_id', { count: 'exact', head: true }).eq('story_id', cur.id).then(function (r) { if (!r.error) vb.lastChild.textContent = String(r.count || 0); });
+        frame.append(vb);
       }
 
       // kaydırma hareketleri: aşağı = kapat, yana = kişi değiştir
@@ -2043,7 +2242,12 @@
       else if (m.media_type === 'video') box.append(h('video', { class: 'mimg', src: u, controls: true, playsinline: true, preload: 'metadata' }));
       else box.append(h('audio', { class: 'maud', src: u, controls: true, preload: 'metadata' }));
     }
-    if (m.body && m.body !== MEDIA_PLACE[m.media_type]) box.append(h('span', null, m.body));
+    if (m.body && m.body !== MEDIA_PLACE[m.media_type]) {
+      var pm = POST_RE.exec(m.body);
+      var txt = pm ? m.body.replace(/\S*#\/p\/[0-9a-f-]{36}\S*/i, '').trim() : m.body;
+      if (txt) box.append(h('span', null, txt));
+      if (pm) box.append(postPreview(pm[1]));
+    }
     return box;
   }
 
