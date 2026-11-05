@@ -1851,7 +1851,7 @@
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.0946';
+  var APP_VERSION = '2026.11.05.0953';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
