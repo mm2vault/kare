@@ -695,3 +695,10 @@ body.in-chat #ann { display: none; }
 .nbadge svg { width: 11px; height: 11px; fill: currentColor; stroke: currentColor; }
 .nrow.unread { position: relative; }
 .nrow.unread::before { content: ''; position: absolute; left: 2px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--accent); }
+
+/* ===== v15: görüntülenme, tema geçişi ===== */
+.viewsline { display: flex; align-items: center; gap: 6px; padding: 0 14px 10px; font-size: 13px; color: var(--muted); }
+.viewsline svg { width: 16px; height: 16px; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }

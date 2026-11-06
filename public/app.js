@@ -352,8 +352,16 @@
     var sec = currentSection();
     var themeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Temayı değiştir', onclick: function () {
       var next = effectiveTheme() === 'dark' ? 'light' : 'dark';
-      PREF.set('theme', next); applyPrefs();
-      renderHeader();
+      var bx = this.getBoundingClientRect(), cx = bx.left + bx.width / 2, cy = bx.top + bx.height / 2;
+      var run = function () { PREF.set('theme', next); applyPrefs(); renderHeader(); };
+      var reduce = (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) || document.documentElement.getAttribute('data-motion') === 'off';
+      if (document.startViewTransition && !reduce) {
+        var rad = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy));
+        var tr = document.startViewTransition(run);
+        tr.ready.then(function () {
+          document.documentElement.animate({ clipPath: ['circle(0px at ' + cx + 'px ' + cy + 'px)', 'circle(' + rad + 'px at ' + cx + 'px ' + cy + 'px)'] }, { duration: 600, easing: 'cubic-bezier(.4,0,.2,1)', pseudoElement: '::view-transition-new(root)' });
+        }).catch(function () {});
+      } else run();
     } }, icon(effectiveTheme() === 'dark' ? 'sun' : 'moon'));
     var nav = h('nav', { class: 'nav', 'aria-label': 'Ana menü' });
     var bottom = $('#bottom');
@@ -413,14 +421,65 @@
   }
   var FILTER_OK = (function () { try { return 'filter' in CanvasRenderingContext2D.prototype && !/^((?!chrome|android).)*safari/i.test(navigator.userAgent); } catch (e) { return false; } })();
   var FILTERS = [['Normal', ''], ['Siyah-beyaz', 'grayscale(1) contrast(1.05)'], ['Sepya', 'sepia(.85)'], ['Canlı', 'saturate(1.6) contrast(1.08)'], ['Soğuk', 'hue-rotate(-14deg) saturate(1.15) brightness(1.03)'], ['Sıcak', 'sepia(.3) saturate(1.35) hue-rotate(-8deg)'], ['Soluk', 'contrast(.88) brightness(1.1) saturate(.75)']];
+  var CAN_COMPRESS = !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream && (window.AudioContext || window.webkitAudioContext));
+  function compressVideo(file, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), v = document.createElement('video');
+      v.src = url; v.playsInline = true; v.preload = 'auto'; v.crossOrigin = 'anonymous';
+      var cleanup = function () { URL.revokeObjectURL(url); try { v.pause(); } catch (e) {} };
+      v.onerror = function () { cleanup(); reject(new Error('Video açılamadı.')); };
+      v.onloadedmetadata = function () {
+        var dur = v.duration;
+        if (!isFinite(dur) || dur > 180) { cleanup(); reject(new Error('Video en fazla 3 dakika olabilir.')); return; }
+        var sc = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight));
+        var W = Math.max(2, Math.round(v.videoWidth * sc / 2) * 2), H = Math.max(2, Math.round(v.videoHeight * sc / 2) * 2);
+        var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        var ctx = cv.getContext('2d');
+        var out = cv.captureStream(30);
+        var AC = window.AudioContext || window.webkitAudioContext, ac = null;
+        try {
+          ac = new AC(); var srcN = ac.createMediaElementSource(v), dest = ac.createMediaStreamDestination();
+          srcN.connect(dest); dest.stream.getAudioTracks().forEach(function (t) { out.addTrack(t); });
+        } catch (e) { ac = null; }
+        var mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(function (m) { return MediaRecorder.isTypeSupported(m); });
+        if (!mime) { cleanup(); reject(new Error('Bu tarayıcı videoyu küçültemiyor.')); return; }
+        var chunks = [], rec;
+        try { rec = new MediaRecorder(out, { mimeType: mime, videoBitsPerSecond: 2500000, audioBitsPerSecond: 96000 }); } catch (e) { cleanup(); reject(e); return; }
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = function () {
+          cleanup(); if (ac) { try { ac.close(); } catch (e) {} }
+          var ct = mime.split(';')[0];
+          resolve({ blob: new Blob(chunks, { type: ct }), contentType: ct, ext: ct === 'video/mp4' ? 'mp4' : 'webm', w: W, h: H });
+        };
+        var stop = false;
+        function draw() {
+          if (stop) return;
+          ctx.drawImage(v, 0, 0, W, H);
+          if (onProgress && dur) onProgress(Math.min(99, Math.round(v.currentTime / dur * 100)));
+          if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+        }
+        v.onended = function () { stop = true; setTimeout(function () { try { rec.stop(); } catch (e) {} }, 200); };
+        if (ac && ac.resume) ac.resume();
+        rec.start(1000);
+        v.play().then(draw, function () { cleanup(); reject(new Error('Video işlenemedi.')); });
+      };
+    });
+  }
   async function prepareMedia(file, opts) {
     opts = opts || {};
     var max = opts.max || 1600;
     if (file.type.indexOf('video/') === 0) {
       if (opts.imageOnly) throw new Error('Burada sadece fotoğraf seçebilirsin.');
       if (['video/mp4', 'video/webm', 'video/quicktime'].indexOf(file.type) < 0) throw new Error('Video MP4, WebM veya MOV olmalı.');
-      if (file.size > MAX_VIDEO) throw new Error('Video en fazla 50 MB olabilir.');
       var d = await videoDims(file);
+      var big = file.size > 20 * 1024 * 1024 || Math.max(d.w, d.h) > 1920;
+      if (big && CAN_COMPRESS && !opts.noCompress) {
+        try {
+          var c = await compressVideo(file, opts.onProgress);
+          if (c.blob.size < file.size && c.blob.size <= MAX_VIDEO) return { blob: c.blob, type: 'video', contentType: c.contentType, ext: c.ext, w: c.w, h: c.h };
+        } catch (e) { if (file.size > MAX_VIDEO) throw e; }
+      }
+      if (file.size > MAX_VIDEO) throw new Error('Video 50 MB üstü ve küçültülemedi. Daha kısa bir video dene.');
       return { blob: file, type: 'video', contentType: file.type, ext: file.type === 'video/webm' ? 'webm' : file.type === 'video/quicktime' ? 'mov' : 'mp4', w: d.w, h: d.h };
     }
     if (file.type.indexOf('image/') !== 0) throw new Error('Lütfen fotoğraf ya da video seç.');
@@ -596,7 +655,8 @@
       submit.disabled = true;
       for (var i = 0; i < files.length; i++) {
         try {
-          var prep = await prepareMedia(files[i]);
+          var prep = await prepareMedia(files[i], { onProgress: function (n) { err.textContent = 'Video küçültülüyor… %' + n; } });
+          err.textContent = '';
           items.push({ prep: prep, file: files[i], filter: '', url: URL.createObjectURL(prep.blob) });
           render();
         } catch (e) { msgs.push(files[i].name + ': ' + friendlyError(e)); }
@@ -686,7 +746,23 @@
     return items;
   }
 
+  async function fetchForYou() {
+    var since = new Date(Date.now() - 21 * 864e5).toISOString();
+    var r = await sb.from('posts').select(POST_SEL).gte('created_at', since).order('created_at', { ascending: false }).limit(80);
+    if (r.error) throw r.error;
+    var now = Date.now();
+    var items = (r.data || []).filter(function (p) { return !hidden(p.user_id); }).map(function (p) {
+      var ageH = Math.max(0, (now - ms(p.created_at)) / 36e5);
+      var eng = 1 + cnt(p.likes) * 2 + cnt(p.comments) * 3 + cnt(p.reposts) * 4;
+      var boost = state.following.has(p.user_id) ? 1.8 : (state.me && p.user_id === state.me.id ? 0.6 : 1);
+      var score = eng * boost / Math.pow(ageH + 6, 1.15);
+      return { key: 'p' + p.id, post: p, sortAt: p.created_at, repostedBy: null, score: score };
+    }).sort(function (a, b) { return b.score - a.score; }).slice(0, 40);
+    await attachMine(items);
+    return { items: items, cursor: null };
+  }
   async function fetchFeed(tab, before) {
+    if (tab === 'foryou') return fetchForYou();
     var follow = null;
     if (tab === 'follow') {
       follow = Array.from(state.following);
@@ -717,6 +793,21 @@
   }
 
   /* ================= paylaşım kartı ================= */
+  var viewedSeen = {};
+  var postIO = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      var el = e.target, id = el._pid;
+      if (!id || viewedSeen[id]) return;
+      if (e.isIntersecting) { el._vt = setTimeout(function () { recordView(id, el._owner); }, 1200); }
+      else if (el._vt) { clearTimeout(el._vt); el._vt = null; }
+    });
+  }, { threshold: 0.6 }) : null;
+  function recordView(id, owner) {
+    if (viewedSeen[id] || !state.me || owner === state.me.id) return;
+    viewedSeen[id] = true;
+    sb.from('post_views').upsert({ post_id: id, viewer_id: state.me.id }, { onConflict: 'post_id,viewer_id', ignoreDuplicates: true }).then(function () {}, function () {});
+  }
+  function watchView(el, p) { if (postIO && state.me && p.user_id !== state.me.id) { el._pid = p.id; el._owner = p.user_id; postIO.observe(el); } }
   var vio = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
       var v = e.target;
@@ -889,6 +980,11 @@
     card.append(h('div', { class: 'actions' }, likeBtn, comBtn, repBtn, shBtn, h('span', { class: 'sp' }), favBtn));
     var likesLine = h('button', { class: 'likesline', type: 'button', onclick: function () { likersModal(p.id, st.likes); } });
     card.append(likesLine);
+    if (state.me && p.user_id === state.me.id) {
+      var vwLine = h('span', { class: 'viewsline' }, icon('eye'), h('span', null, '…'));
+      sb.from('post_views').select('post_id', { count: 'exact', head: true }).eq('post_id', p.id).then(function (r) { if (!r.error) vwLine.lastChild.textContent = (r.count || 0) + ' görüntülenme'; else vwLine.remove(); });
+      card.append(vwLine);
+    } else watchView(card, p);
     paint();
 
     var body = h('div', { class: 'card-body' });
@@ -959,7 +1055,21 @@
     var list = h('div', { class: 'shlist' });
     var sendBtn = h('button', { class: 'btn', type: 'button', hidden: true }, 'Gönder');
     function ext(label, ico, href) { return h('a', { class: 'shbtn', href: href, target: '_blank', rel: 'noopener noreferrer' }, h('span', { class: 'shi' }, icon(ico)), label); }
-    var quick = h('div', { class: 'shrow' },
+    var first = mediaList(p)[0];
+    var toStory = state.me && first ? h('button', { class: 'shbtn', type: 'button', onclick: async function (ev) {
+      var b = ev.currentTarget; b.disabled = true;
+      try {
+        var resp = await fetch(mediaUrl(first.media_path)); var blob = await resp.blob();
+        var isV = first.media_type === 'video';
+        var ct = blob.type || (isV ? 'video/mp4' : 'image/jpeg');
+        var prep = { blob: blob, type: isV ? 'video' : 'image', contentType: ct, ext: ct.indexOf('png') > -1 ? 'png' : ct.indexOf('webp') > -1 ? 'webp' : ct.indexOf('webm') > -1 ? 'webm' : isV ? 'mp4' : 'jpg' };
+        var path = await uploadPrepared(prep, 's-');
+        var ins = await sb.from('stories').insert({ user_id: state.me.id, media_path: path, media_type: prep.type, caption: p.author && p.author.username ? 'via @' + p.author.username : null });
+        if (ins.error) { removeFile(path); throw ins.error; }
+        toast('Hikayene eklendi.'); mm.close(); if (location.hash === '#/' || location.hash === '' || location.hash === '#') route();
+      } catch (e) { b.disabled = false; toast(friendlyError(e), true); }
+    } }, h('span', { class: 'shi' }, icon('plus')), 'Hikayem') : null;
+    var quick = h('div', { class: 'shrow' }, toStory,
       h('button', { class: 'shbtn', type: 'button', onclick: function () { copyLink(p.id); } }, h('span', { class: 'shi' }, icon('link')), 'Kopyala'),
       navigator.share ? h('button', { class: 'shbtn', type: 'button', onclick: function () { navigator.share({ title: 'Kare', text: text, url: url }).catch(function () {}); } }, h('span', { class: 'shi' }, icon('send')), 'Diğer') : null,
       ext('WhatsApp', 'comment', 'https://wa.me/?text=' + encodeURIComponent(text + ' ' + url)),
@@ -1314,13 +1424,14 @@
 
   async function feedPage(tok) {
     var tab = 'all';
-    try { tab = sessionStorage.getItem('kare_tab') === 'follow' && state.me ? 'follow' : 'all'; } catch (e) {}
+    try { var st0 = sessionStorage.getItem('kare_tab'); tab = (st0 === 'follow' || st0 === 'foryou') && state.me ? st0 : 'all'; } catch (e) {}
     var storiesHost = h('div');
     var list = h('div', { class: 'feed' });
     var moreWrap = h('div', { class: 'loadmore', hidden: true });
-    var tabAll = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { setTab('all'); } }, 'Keşfet');
+    var tabAll = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { setTab('all'); } }, 'Yeni');
     var tabFollow = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { if (!requireLogin()) return; setTab('follow'); } }, 'Takip');
-    var tabs = h('div', { class: 'tabs', role: 'tablist' }, tabAll, tabFollow);
+    var tabFor = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: function () { if (!requireLogin()) return; setTab('foryou'); } }, 'Sana özel');
+    var tabs = h('div', { class: 'tabs', role: 'tablist' }, tabAll, tabFor, tabFollow);
     var pendingNew = 0;
     var banner = h('button', { class: 'newposts', type: 'button', hidden: true, onclick: function () {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1338,6 +1449,7 @@
     function paintTabs() {
       tabAll.setAttribute('aria-selected', tab === 'all' ? 'true' : 'false');
       tabFollow.setAttribute('aria-selected', tab === 'follow' ? 'true' : 'false');
+      tabFor.setAttribute('aria-selected', tab === 'foryou' ? 'true' : 'false');
     }
     async function load(reset) {
       if (loading) return;
@@ -1947,7 +2059,7 @@
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.05.1544';
+  var APP_VERSION = '2026.11.06.0915';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
