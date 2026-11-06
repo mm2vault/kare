@@ -431,7 +431,7 @@
       v.onloadedmetadata = function () {
         var dur = v.duration;
         if (!isFinite(dur) || dur > 180) { cleanup(); reject(new Error('Video en fazla 3 dakika olabilir.')); return; }
-        var sc = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight));
+        var sc = Math.min(1, 1920 / Math.max(v.videoWidth, v.videoHeight));
         var W = Math.max(2, Math.round(v.videoWidth * sc / 2) * 2), H = Math.max(2, Math.round(v.videoHeight * sc / 2) * 2);
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
         var ctx = cv.getContext('2d');
@@ -444,7 +444,7 @@
         var mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(function (m) { return MediaRecorder.isTypeSupported(m); });
         if (!mime) { cleanup(); reject(new Error('Bu tarayıcı videoyu küçültemiyor.')); return; }
         var chunks = [], rec;
-        try { rec = new MediaRecorder(out, { mimeType: mime, videoBitsPerSecond: 2500000, audioBitsPerSecond: 96000 }); } catch (e) { cleanup(); reject(e); return; }
+        try { rec = new MediaRecorder(out, { mimeType: mime, videoBitsPerSecond: Math.max(1500000, Math.min(10000000, Math.floor(44 * 1024 * 1024 * 8 / dur) - 160000)), audioBitsPerSecond: 128000 }); } catch (e) { cleanup(); reject(e); return; }
         rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
         rec.onstop = function () {
           cleanup(); if (ac) { try { ac.close(); } catch (e) {} }
@@ -467,12 +467,12 @@
   }
   async function prepareMedia(file, opts) {
     opts = opts || {};
-    var max = opts.max || 1600;
+    var max = opts.max || 2560;
     if (file.type.indexOf('video/') === 0) {
       if (opts.imageOnly) throw new Error('Burada sadece fotoğraf seçebilirsin.');
       if (['video/mp4', 'video/webm', 'video/quicktime'].indexOf(file.type) < 0) throw new Error('Video MP4, WebM veya MOV olmalı.');
       var d = await videoDims(file);
-      var big = file.size > 20 * 1024 * 1024 || Math.max(d.w, d.h) > 1920;
+      var big = file.size > 45 * 1024 * 1024;
       if (big && CAN_COMPRESS && !opts.noCompress) {
         try {
           var c = await compressVideo(file, opts.onProgress);
@@ -502,7 +502,7 @@
     if (opts.filter && FILTER_OK) ctx.filter = opts.filter;
     ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, cw, ch);
     if (bmp.close) bmp.close();
-    var blob = await new Promise(function (res) { cv.toBlob(res, 'image/jpeg', 0.86); });
+    var blob = await new Promise(function (res) { cv.toBlob(res, 'image/jpeg', 0.93); });
     if (!blob) throw new Error('Fotoğraf işlenemedi.');
     return { blob: blob, type: 'image', contentType: 'image/jpeg', ext: 'jpg', w: cw, h: ch };
   }
@@ -2059,7 +2059,7 @@
     return card;
   }
   /* ---- sürüm denetimi ---- */
-  var APP_VERSION = '2026.11.06.0915';
+  var APP_VERSION = '2026.11.06.0943';
   var APK_URL = 'https://github.com/mm2vault/kare/releases/download/apk-latest/Kare.apk';
   function hardRefresh() {
     return (async function () {
